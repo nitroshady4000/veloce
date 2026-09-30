@@ -1,0 +1,119 @@
+{
+  "date": "2026-09-30T10:48:39.362379+00:00",
+  "kind": "synthetic-smoke-not-quality-benchmark",
+  "machine": "Apple M2 Pro",
+  "ram_bytes": 17179869184,
+  "macos": "27.2",
+  "python": "3.12.11",
+  "reference": "Bonjour, ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+  "runs": [
+    {
+      "model": "qwen3-0.6b",
+      "revision": "89e96d92ba34aca20b3e29fb10cc284097d1219f",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2543
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2431
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2412
+        }
+      ],
+      "load_seconds": 1.5844,
+      "silence": {
+        "text": "",
+        "language": "French",
+        "model": "qwen3-0.6b",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0,
+        "silence_detected": true
+      }
+    },
+    {
+      "model": "qwen3-1.7b",
+      "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+      "speech": [
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.5118
+        },
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.5136
+        },
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.4968
+        }
+      ],
+      "load_seconds": 1.6276,
+      "silence": {
+        "text": "",
+        "language": "French",
+        "model": "qwen3-1.7b",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0,
+        "silence_detected": true
+      }
+    },
+    {
+      "model": "parakeet-v3",
+      "revision": "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.1214
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.0885
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.0892
+        }
+      ],
+      "load_seconds": 1.1693,
+      "silence": {
+        "text": "",
+        "language": "French",
+        "model": "parakeet-v3",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0,
+        "silence_detected": true
+      }
+    }
+  ]
+}

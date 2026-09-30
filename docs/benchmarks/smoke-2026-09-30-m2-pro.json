@@ -1,0 +1,51 @@
+{
+  "date": "2026-09-30T10:43:06.824034+00:00",
+  "kind": "synthetic-smoke-not-quality-benchmark",
+  "machine": "Apple M2 Pro",
+  "ram_bytes": 17179869184,
+  "macos": "27.2",
+  "python": "3.12.11",
+  "reference": "Bonjour, ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+  "runs": [
+    {
+      "model": "qwen3-0.6b",
+      "revision": "89e96d92ba34aca20b3e29fb10cc284097d1219f",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.9317
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2726
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.3269
+        }
+      ],
+      "load_seconds": 6.5754,
+      "silence": {
+        "text": "",
+        "language": "French",
+        "model": "qwen3-0.6b",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0,
+        "silence_detected": true
+      }
+    }
+  ],
+  "notes": [
+    "Partial post-fix run; stopped before completing all models because a second app model worker was active.",
+    "The completed Qwen 0.6B run verifies the digital-silence gate. This file is not an all-model performance comparison."
+  ]
+}

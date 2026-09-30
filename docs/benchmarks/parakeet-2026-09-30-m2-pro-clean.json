@@ -1,0 +1,47 @@
+{
+  "date": "2026-09-30T10:47:56.534211+00:00",
+  "kind": "synthetic-smoke-not-quality-benchmark",
+  "machine": "Apple M2 Pro",
+  "ram_bytes": 17179869184,
+  "macos": "27.2",
+  "python": "3.12.11",
+  "reference": "Bonjour, ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+  "runs": [
+    {
+      "model": "parakeet-v3",
+      "revision": "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 6.5045
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.3483
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.1237
+        }
+      ],
+      "load_seconds": 1.035,
+      "silence": {
+        "text": "",
+        "language": "French",
+        "model": "parakeet-v3",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0,
+        "silence_detected": true
+      }
+    }
+  ]
+}

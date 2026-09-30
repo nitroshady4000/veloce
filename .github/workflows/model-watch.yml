@@ -1,0 +1,14 @@
+name: Weekly model watch
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare pinned engines with published versions
+        run: python3 scripts/check-updates.py >> "$GITHUB_STEP_SUMMARY"

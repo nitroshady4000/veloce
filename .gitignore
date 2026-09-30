@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+build/
+.swiftpm/
+Engine/.venv/
+Engine/.cache/
+Engine/.models/
+Engine/.uv-cache/
+Engine/.python/
+__pycache__/
+*.pyc
+.env
+benchmarks/local/

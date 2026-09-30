@@ -1,0 +1,121 @@
+{
+  "date": "2026-09-30T10:40:37.536379+00:00",
+  "kind": "synthetic-smoke-not-quality-benchmark",
+  "machine": "Apple M2 Pro",
+  "ram_bytes": 17179869184,
+  "macos": "27.2",
+  "python": "3.12.11",
+  "reference": "Bonjour, ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+  "runs": [
+    {
+      "model": "qwen3-0.6b",
+      "revision": "89e96d92ba34aca20b3e29fb10cc284097d1219f",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2767
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2537
+        },
+        {
+          "text": "Bonjour, ceci est un test de dictée en français. Le rendez vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-0.6b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.2507
+        }
+      ],
+      "load_seconds": 3.1178,
+      "silence": {
+        "text": "Le.",
+        "language": "French",
+        "model": "qwen3-0.6b",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.0508
+      }
+    },
+    {
+      "model": "qwen3-1.7b",
+      "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+      "speech": [
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.501
+        },
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.4924
+        },
+        {
+          "text": "Bonjour. Ceci est un test de dictée en français. Le rendez-vous est prévu demain à quatorze heures.",
+          "language": "French",
+          "model": "qwen3-1.7b",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 0.5024
+        }
+      ],
+      "load_seconds": 2.9428,
+      "silence": {
+        "text": "C'est un peu comme ça.",
+        "language": "French",
+        "model": "qwen3-1.7b",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 0.1772
+      }
+    },
+    {
+      "model": "parakeet-v3",
+      "revision": "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15",
+      "speech": [
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 7.5988
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 32.5974
+        },
+        {
+          "text": "Bonjour, ceci est un test de dicté en français. Le rendez-vous est prévu demain à 14h.",
+          "language": null,
+          "model": "parakeet-v3",
+          "audio_duration_seconds": 6.0115625,
+          "inference_seconds": 13.1423
+        }
+      ],
+      "load_seconds": 4.8954,
+      "silence": {
+        "text": "",
+        "language": null,
+        "model": "parakeet-v3",
+        "audio_duration_seconds": 2.0,
+        "inference_seconds": 41.035
+      }
+    }
+  ],
+  "notes": [
+    "Recorded before amplitude silence gate and before Parakeet input dtype was matched to upstream bfloat16.",
+    "Qwen silence outputs demonstrate why the gate was added.",
+    "Parakeet timings were affected by overlapping app/model activity and are not valid performance comparisons."
+  ]
+}
