@@ -30,6 +30,35 @@ public struct MeetingRecord: Codable, Identifiable, Sendable {
     public var originalFilename: String?
     public var isImported: Bool { originalFilename != nil }
 
+    public var speakers: [String] {
+        var seen = Set<String>()
+        return segments.compactMap { seen.insert($0.speaker).inserted ? $0.speaker : nil }
+    }
+
+    public func matches(_ query: String) -> Bool {
+        let words = query.split(whereSeparator: \.isWhitespace).map {
+            String($0).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "fr"))
+        }
+        guard !words.isEmpty else { return true }
+        let content = ([title, originalFilename ?? "", notes] + segments.map { "\(speakerName($0)) \($0.text)" })
+            .joined(separator: "\n").folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "fr"))
+        return words.allSatisfy { content.contains($0) }
+    }
+
+    public mutating func editSegment(_ id: String, text: String, speaker: String) {
+        guard let index = segments.firstIndex(where: { $0.id == id }) else { return }
+        segments[index].text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let speaker = speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !speaker.isEmpty { segments[index].speaker = speaker }
+    }
+
+    /// Reassigns every passage, retaining source tracks, times, and the target's name.
+    public mutating func mergeSpeaker(_ source: String, into target: String) {
+        guard source != target, speakers.contains(target) else { return }
+        for index in segments.indices where segments[index].speaker == source { segments[index].speaker = target }
+        speakerNames.removeValue(forKey: source)
+    }
+
     public init(title: String, date: Date = Date()) {
         id = UUID(); self.title = title; self.date = date
         duration = 0; status = .recording; segments = []; speakerNames = [:]
@@ -51,6 +80,11 @@ public struct MeetingRecord: Codable, Identifiable, Sendable {
     public var srt: String {
         segments.enumerated().map { index, segment in
             "\(index + 1)\n\(Self.subtitleTimestamp(segment.start)) --> \(Self.subtitleTimestamp(max(segment.end, segment.start + 0.01)))\n\(speakerName(segment)): \(segment.text.replacingOccurrences(of: "\n", with: " "))\n"
+        }.joined(separator: "\n")
+    }
+    public var vtt: String {
+        "WEBVTT\n\n" + segments.enumerated().map { index, segment in
+            "\(index + 1)\n\(Self.subtitleTimestamp(segment.start).replacingOccurrences(of: ",", with: ".")) --> \(Self.subtitleTimestamp(max(segment.end, segment.start + 0.01)).replacingOccurrences(of: ",", with: "."))\n\(speakerName(segment)): \(segment.text.replacingOccurrences(of: "\n", with: " "))\n"
         }.joined(separator: "\n")
     }
     public static func timestamp(_ seconds: Double) -> String {

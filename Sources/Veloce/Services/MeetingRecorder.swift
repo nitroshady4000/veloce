@@ -130,6 +130,15 @@ final class MeetingRecorder {
         return try await session.output.finish(duration: session.duration)
     }
 
+    /// A bounded, queue-serialized copy of completed PCM writes. Capture continues
+    /// while the one ASR worker reads these immutable temporary files.
+    func snapshot(directory: URL, from start: Double, through end: Double) async throws -> MeetingCaptureResult {
+        guard let session, generation != nil, start >= 0, end > start, end - start <= 40 else {
+            throw CaptureError.notRecording
+        }
+        return try await session.output.snapshot(directory: directory, from: start, through: min(end, session.duration))
+    }
+
     /// Ends a pending or active capture, preserving every audio file already written.
     /// It never removes a completed meeting or an interrupted recording.
     func cancel() async {
@@ -158,6 +167,17 @@ final class MeetingRecorder {
         let packet = try syntheticStereoPacket()
         for offset in [0.1, 0.2, 0.5] { _ = try microphone.append(packet, at: offset) }
         for offset in [0.3, 0.4] { _ = try system.append(packet, at: offset) }
+        let liveMicrophone = directory.appendingPathComponent("verify-live-microphone.wav")
+        let liveSystem = directory.appendingPathComponent("verify-live-system.wav")
+        try microphone.snapshot(to: liveMicrophone, from: 0.1, through: 0.9)
+        try system.snapshot(to: liveSystem, from: 0.1, through: 0.9)
+        for source in [liveMicrophone, liveSystem] {
+            let snapshot = try AVAudioFile(forReading: source)
+            guard snapshot.length == 12_800, snapshot.fileFormat.channelCount == 1,
+                  snapshot.fileFormat.sampleRate == 16_000 else {
+                throw CaptureError.captureFailed("Auto-test : le snapshot du direct n’est pas aligné.")
+            }
+        }
         try microphone.finish(duration: 1)
         try system.finish(duration: 1)
         for track in [microphone, system] {
@@ -327,6 +347,23 @@ private final class MeetingAudioOutput: NSObject, SCStreamOutput, SCStreamDelega
         }
     }
 
+    func snapshot(directory: URL, from start: Double, through end: Double) async throws -> MeetingCaptureResult {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { [self] in
+                do {
+                    if let failure { throw failure }
+                    guard !finished, end > start else { throw MeetingRecorder.CaptureError.notRecording }
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                    let mic = directory.appendingPathComponent("microphone.wav")
+                    let remote = directory.appendingPathComponent("system.wav")
+                    try microphone.snapshot(to: mic, from: start, through: end)
+                    try system.snapshot(to: remote, from: start, through: end)
+                    continuation.resume(returning: MeetingCaptureResult(microphoneURL: mic, systemURL: remote, duration: end - start))
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
     func finish(duration: Double) async throws -> MeetingCaptureResult {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
@@ -446,6 +483,31 @@ private final class MeetingAudioTrack {
         do { try file?.synchronize(); try file?.close() } catch { if firstError == nil { firstError = error } }
         file = nil
         if let firstError { throw firstError }
+    }
+
+    func snapshot(to destination: URL, from start: Double, through end: Double) throws {
+        let startFrame = Int((start * 16_000).rounded(.down))
+        let endFrame = Int((end * 16_000).rounded(.down))
+        let frames = max(0, endFrame - startFrame)
+        guard frames <= 640_000 else { throw MeetingRecorder.CaptureError.invalidAudio }
+        try Self.header(frames: frames).write(to: destination, options: .withoutOverwriting)
+        let input = try FileHandle(forReadingFrom: url)
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? input.close(); try? output.close() }
+        try output.seekToEnd()
+        let available = max(0, min(endFrame, actualFrames) - startFrame)
+        if available > 0 {
+            try input.seek(toOffset: UInt64(44 + startFrame * 2))
+            guard let data = try input.read(upToCount: available * 2), data.count == available * 2 else {
+                throw MeetingRecorder.CaptureError.invalidAudio
+            }
+            try output.write(contentsOf: data)
+        }
+        var remaining = frames - available
+        while remaining > 0 {
+            let count = min(remaining, zeros.count / 2)
+            try output.write(contentsOf: zeros.prefix(count * 2)); remaining -= count
+        }
     }
 
     private func writeSilence(frames: Int) throws {

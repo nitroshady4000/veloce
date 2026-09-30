@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 
 /// Native offline decoding and downmixing. The caller owns security-scoped URL access.
@@ -14,7 +15,7 @@ enum MeetingAudioImporter {
             switch self {
             case .empty: "Ce fichier ne contient aucun son exploitable."
             case .tooLong: "L’import accepte des fichiers de 4 heures maximum. Découpe cet enregistrement avant de l’importer."
-            case let .unreadable(detail): "Impossible de lire ce fichier audio. Utilise un fichier WAV, M4A, MP3, AIFF ou CAF valide. \(detail)"
+            case let .unreadable(detail): "Impossible de lire ce média. Utilise un audio WAV, M4A, MP3, AIFF ou CAF, ou une vidéo MP4/MOV contenant du son. \(detail)"
             case .destinationExists: "Une piste existe déjà à cet emplacement. Elle n’a pas été remplacée."
             case .invalidDestination: "Le fichier importé doit être enregistré dans un nouvel emplacement WAV local."
             case let .conversion(detail): "L’import audio a échoué. Le fichier d’origine est intact. \(detail)"
@@ -25,7 +26,10 @@ enum MeetingAudioImporter {
     static func importFile(from source: URL, to destination: URL,
                            progress: @escaping @Sendable (Double) -> Void) async throws -> Double {
         let worker = Task.detached(priority: .userInitiated) {
-            try convert(source: source, destination: destination, progress: progress)
+            if ["mp4", "mov", "m4v"].contains(source.pathExtension.lowercased()) {
+                return try await convertVideo(source: source, destination: destination, progress: progress)
+            }
+            return try convert(source: source, destination: destination, progress: progress)
         }
         return try await withTaskCancellationHandler {
             try await worker.value
@@ -33,6 +37,90 @@ enum MeetingAudioImporter {
             // Detached work does not inherit cancellation automatically.
             worker.cancel()
         }
+    }
+
+    /// Reads only the first audio track; no video frame is decoded or retained.
+    private static func convertVideo(source: URL, destination: URL,
+                                     progress: @escaping @Sendable (Double) -> Void) async throws -> Double {
+        try Task.checkCancellation()
+        guard source.isFileURL, destination.isFileURL, destination.pathExtension.lowercased() == "wav" else {
+            throw ImportError.invalidDestination
+        }
+        let asset = AVURLAsset(url: source)
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw ImportError.empty }
+        let estimated = try await asset.load(.duration).seconds
+        if estimated.isFinite, estimated > maximumDuration { throw ImportError.tooLong }
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ])
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { throw ImportError.unreadable("La piste audio vidéo n’est pas décodable par macOS.") }
+        reader.add(output)
+        do { try Data().write(to: destination, options: .withoutOverwriting) }
+        catch {
+            if (error as NSError).code == NSFileWriteFileExistsError { throw ImportError.destinationExists }
+            throw error
+        }
+        var file: FileHandle?
+        defer { reader.cancelReading(); try? file?.close() }
+        do {
+            file = try FileHandle(forWritingTo: destination)
+            try file?.write(contentsOf: wavHeader(frames: 0))
+            guard reader.startReading() else { throw ImportError.unreadable(reader.error?.localizedDescription ?? "Le décodeur vidéo n’a pas démarré.") }
+            var bytes = 0
+            var lastProgress = 0.0
+            progress(0)
+            while let sample = output.copyNextSampleBuffer() {
+                try Task.checkCancellation()
+                guard let description = sample.formatDescription,
+                      let format = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+                      format.pointee.mFormatID == kAudioFormatLinearPCM,
+                      format.pointee.mChannelsPerFrame == 1,
+                      format.pointee.mBitsPerChannel == 16,
+                      format.pointee.mSampleRate == sampleRate,
+                      let block = sample.dataBuffer else { throw ImportError.conversion("Le décodeur vidéo a fourni un format audio inattendu.") }
+                let count = CMBlockBufferGetDataLength(block)
+                guard count > 0, count <= 4_194_304, count % 2 == 0 else { throw ImportError.conversion("Un paquet audio vidéo est invalide.") }
+                var data = Data(count: count)
+                let status = data.withUnsafeMutableBytes { pointer in
+                    CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count, destination: pointer.baseAddress!)
+                }
+                guard status == kCMBlockBufferNoErr else { throw ImportError.conversion("Impossible de lire la piste audio vidéo.") }
+                bytes += count
+                let duration = Double(bytes) / (sampleRate * 2)
+                guard duration <= maximumDuration else { throw ImportError.tooLong }
+                try file?.write(contentsOf: data)
+                let fraction = estimated.isFinite && estimated > 0 ? min(0.99, duration / estimated) : 0
+                if fraction - lastProgress >= 0.01 { progress(fraction); lastProgress = fraction }
+            }
+            try Task.checkCancellation()
+            guard reader.status == .completed else { throw ImportError.unreadable(reader.error?.localizedDescription ?? "La lecture vidéo a été interrompue.") }
+            guard bytes > 0 else { throw ImportError.empty }
+            try file?.seek(toOffset: 0)
+            try file?.write(contentsOf: wavHeader(frames: bytes / 2))
+            try file?.synchronize(); try file?.close(); file = nil
+            progress(1)
+            return Double(bytes) / (sampleRate * 2)
+        } catch {
+            try? file?.close(); file = nil
+            try? FileManager.default.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    private static func wavHeader(frames: Int) -> Data {
+        let bytes = UInt32(frames * 2)
+        var data = Data()
+        func text(_ value: String) { data.append(contentsOf: value.utf8) }
+        func u16(_ value: UInt16) { var little = value.littleEndian; withUnsafeBytes(of: &little) { data.append(contentsOf: $0) } }
+        func u32(_ value: UInt32) { var little = value.littleEndian; withUnsafeBytes(of: &little) { data.append(contentsOf: $0) } }
+        text("RIFF"); u32(bytes + 36); text("WAVEfmt "); u32(16)
+        u16(1); u16(1); u32(16_000); u32(32_000); u16(2); u16(16); text("data"); u32(bytes)
+        return data
     }
 
     private static func convert(source: URL, destination: URL,
@@ -153,6 +241,22 @@ enum MeetingAudioImporter {
             try verifyOutput(destination, duration: duration)
             guard try Data(contentsOf: source) == original else { throw diagnostic("Le fichier d’origine a été modifié.") }
         }
+
+        // Exercise the AVAssetReader movie path with an MP4 container. No image
+        // decoding or source mutation is needed to extract its audio track.
+        let movie = directory.appendingPathComponent("fixture.mp4")
+        let asset = AVURLAsset(url: directory.appendingPathComponent("fixture.m4a"))
+        guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+            throw diagnostic("Création du conteneur MP4 impossible.")
+        }
+        exporter.outputURL = movie; exporter.outputFileType = .mp4
+        await exporter.export()
+        guard exporter.status == .completed else { throw diagnostic("Fixture MP4 : \(exporter.error?.localizedDescription ?? "export incomplet")") }
+        let movieBytes = try Data(contentsOf: movie)
+        let movieOutput = directory.appendingPathComponent("imported-mp4.wav")
+        let movieDuration = try await importFile(from: movie, to: movieOutput) { _ in }
+        try verifyOutput(movieOutput, duration: movieDuration)
+        guard try Data(contentsOf: movie) == movieBytes else { throw diagnostic("Le MP4 d’origine a changé.") }
 
         let source = directory.appendingPathComponent("fixture.wav")
         let existing = directory.appendingPathComponent("existing.wav")

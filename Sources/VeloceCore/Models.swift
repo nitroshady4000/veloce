@@ -30,9 +30,40 @@ public struct Transcript: Identifiable, Codable, Sendable {
     public var model: SpeechModel
     public var duration: Double
     public var latency: Double
-    public init(text: String, model: SpeechModel, duration: Double, latency: Double) {
+    /// The exact ASR output, retained when a snippet or optional cleanup changes it.
+    public var rawText: String?
+    public init(text: String, model: SpeechModel, duration: Double, latency: Double, rawText: String? = nil) {
         self.id = UUID(); self.date = Date(); self.text = text
         self.model = model; self.duration = duration; self.latency = latency
+        self.rawText = rawText == text ? nil : rawText
+    }
+}
+
+public struct VoiceSnippet: Identifiable, Codable, Sendable, Equatable {
+    public var id: UUID
+    public var phrase: String
+    public var text: String
+    public init(id: UUID = UUID(), phrase: String = "", text: String = "") {
+        self.id = id; self.phrase = phrase; self.text = text
+    }
+}
+
+public enum DictationTextPlan {
+    /// A whole utterance must match. Substrings are ordinary dictated prose.
+    public static func snippet(for utterance: String, in snippets: [VoiceSnippet]) -> String? {
+        let key = normalized(utterance)
+        guard !key.isEmpty else { return nil }
+        let matches = snippets.filter {
+            normalized($0.phrase) == key && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard matches.count == 1 else { return nil }
+        return matches[0].text
+    }
+
+    public static func normalized(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "fr_FR"))
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 }
 

@@ -4,8 +4,8 @@ import QuartzCore
 import SwiftUI
 import simd
 
-/// One small GPU layer owns both the V and its light; no SwiftUI layout per frame.
-/// Palette, breath and envelope timing follow Famulus's Feu follet design.
+/// One small GPU layer carries the light; no SwiftUI layout per frame.
+/// The warm palette follows Famulus, while the shape stays a plain capsule.
 struct PillLight: View {
     var phase: PillPhase
     var level: Double
@@ -16,10 +16,10 @@ struct PillLight: View {
         if let frozenTime, let image = PillLightRenderer.snapshot(phase: phase, level: level, time: frozenTime) {
             Image(decorative: image, scale: 2).resizable()
         } else if PillLightRenderer.shared == nil {
-            HStack {
-                VeloceMark(size: 40, color: VeloceTheme.gold)
-                Spacer()
-            }.padding(.leading, PillLayout.margin + 10)
+            PillOutline().stroke(phase == .failure ? VeloceTheme.coral : VeloceTheme.gold,
+                                 lineWidth: phase == .listening ? 1.8 : 0.8)
+                .opacity(phase == .listening ? 0.45 + PillVoiceResponse.amplitude(level) * 0.5 : 0.45)
+                .frame(width: PillLayout.width, height: PillLayout.height)
         } else {
             LivePillLight(phase: phase, level: level, reduceMotion: reduceMotion)
         }
@@ -73,7 +73,7 @@ private final class PillLightView: NSView {
             visibilityObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if self.window?.isVisible == true {
+                    if self.isVisibleForRendering {
                         self.resume()
                         self.drawFrame()
                     } else { self.stop() }
@@ -107,11 +107,12 @@ private final class PillLightView: NSView {
         let stateChanged = self.phase != phase || self.reduceMotion != reduceMotion
         if self.phase != phase { phaseSince = CACurrentMediaTime() }
         self.phase = phase
-        targetLevel = phase == .listening ? max(0, min(1, level)) : 0
+        targetLevel = phase == .listening ? PillVoiceResponse.amplitude(level) : 0
         self.reduceMotion = reduceMotion
         guard window != nil else { return }
         // Meter updates only feed the envelope. The animation clock owns frames.
-        if stateChanged { drawFrame() }
+        // With reduced motion the color still reflects speech, without a clock.
+        if stateChanged || reduceMotion { drawFrame() }
         if shouldAnimate { resume() } else { stop() }
     }
     private var shouldAnimate: Bool {
@@ -119,10 +120,9 @@ private final class PillLightView: NSView {
             (phase == .success && CACurrentMediaTime() - phaseSince <= 1.2))
     }
     private func resume() {
-        guard timer == nil, shouldAnimate, window?.isVisible == true,
-              !isHiddenOrHasHiddenAncestor else { return }
+        guard timer == nil, shouldAnimate, isVisibleForRendering else { return }
         lastTime = CACurrentMediaTime()
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.drawFrame() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -133,18 +133,23 @@ private final class PillLightView: NSView {
         timer?.invalidate()
         if let visibilityObserver { NotificationCenter.default.removeObserver(visibilityObserver) }
     }
+    private var isVisibleForRendering: Bool {
+        guard let window else { return false }
+        return window.isVisible && window.occlusionState.contains(.visible) && !isHiddenOrHasHiddenAncestor
+    }
     private func drawFrame() {
-        guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { stop(); return }
+        guard isVisibleForRendering else { stop(); return }
         guard let renderer else { stop(); return }
         let now = CACurrentMediaTime()
         let dt = min(0.1, max(0, now - lastTime)); lastTime = now
-        let tau = targetLevel > envelope ? 0.06 : 0.35
-        envelope += (targetLevel - envelope) * (1 - exp(-dt / tau))
+        let tau = targetLevel > envelope ? 0.035 : 0.17
+        if reduceMotion { envelope = targetLevel }
+        else { envelope += (targetLevel - envelope) * (1 - exp(-dt / tau)) }
         // Integrating the speed avoids jumps when the microphone level changes.
-        flow += dt * (40 + 120 * envelope)
+        flow += dt * (58 + 230 * envelope)
         guard let drawable = metalLayer.nextDrawable() else { return }
         renderer.draw(texture: drawable.texture, drawable: drawable, phase: phase,
-                      level: reduceMotion ? 0 : envelope, time: reduceMotion ? 0 : now - appearedAt,
+                      level: envelope, time: reduceMotion ? 0 : now - appearedAt,
                       // A reduced-motion success uses its settled pose, never a hop.
                       age: reduceMotion ? 1.3 : now - phaseSince, flow: reduceMotion ? 0 : flow)
         if reduceMotion || phase == .idle || (phase == .success && now - phaseSince > 1.2) || phase == .failure { stop() }
@@ -202,7 +207,9 @@ final class PillLightRenderer {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
         descriptor.usage = [.renderTarget]; descriptor.storageMode = .shared
         guard let texture = renderer.device.makeTexture(descriptor: descriptor),
-              let command = renderer.draw(texture: texture, phase: phase, level: level, time: time, age: 0.25, flow: time * (40 + 120 * level)) else { return nil }
+              let command = renderer.draw(texture: texture, phase: phase, level: PillVoiceResponse.amplitude(level),
+                                          time: time, age: 0.25,
+                                          flow: time * (58 + 230 * PillVoiceResponse.amplitude(level))) else { return nil }
         command.waitUntilCompleted()
         guard command.status == .completed else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -236,46 +243,36 @@ final class PillLightRenderer {
         float2 p = in.uv * u[0].xy;
         float t=u[0].z, voice=u[0].w, state=u[1].x, age=u[1].y, flow=u[1].z;
         bool listening=state==1, thinking=state==2, done=state==3, failed=state==4;
-        float2 center=float2(58.24,56);
-        // The dark glass below is a native view. This layer draws only its light.
-        float capsule=seg(p,float2(58.24,56),float2(360,56))-28;
-        float bulb=length(p-center)-33;
-        float h=clamp(.5+.5*(capsule-bulb)/12,0.0,1.0);
-        float d=mix(capsule,bulb,h)-12*h*(1-h);
-        float heat=clamp(1-(p.x-center.x)/365,.10,1.0);
-        float wave=.5+.5*sin((p.x-center.x-flow)*.034);
-        float angle=atan2((p.y-56)*2.4,p.x-208);
-        float comet=pow(.5+.5*cos(angle-t*5.0265),16.0);
-        float bloom=done ? exp(-pow((length(p-center)-age*900)/48,2.0)) : 0;
-        float energy=.34+(listening ? voice*(.4+.5*wave):0)+(thinking ? .6*comet:0)+bloom*.7;
-        float3 color=fire(heat*.85+wave*.10);
-        if(done) color=mix(float3(.56,.84,.68),float3(1,.95,.82),heat*.5);
+        // This geometry is exactly the native capsule below: no character layer.
+        float d=seg(p,float2(56,56),float2(360,56))-28;
+        float x=(p.x-28)/360;
+        float wave=.5+.5*sin((p.x-flow)*.039 + sin(t*1.3)*.65);
+        float breath=.5+.5*sin(t*2.5);
+        float angle=atan2((p.y-56)*3.4,p.x-208);
+        float comet=pow(.5+.5*cos(angle-t*4.8),9.0);
+        float bloom=done ? exp(-age*3.2) : 0;
+        float energy=.38;
+        if(listening) energy=.56 + .18*breath + voice*(.85+.70*wave);
+        if(thinking) energy=.55 + .95*comet;
+        if(done) energy=.62 + bloom*.65;
+        if(failed) energy=.62;
+        // Speech shifts the palette through pink, coral and gold, and widens the
+        // light along the edge. Silent listening still has a gentle breathing glow.
+        float heat=.24 + .47*(1-x) + .16*wave + (listening ? voice*.22 : 0);
+        float3 color=fire(heat);
+        if(done) color=mix(float3(.56,.84,.68),float3(1,.95,.82),wave*.2);
         if(failed) color=float3(1,.416,.36);
-        float rim=exp(-d*d/1.3)*energy;
-        float halo=exp(-abs(d)/4.0)*energy*.10;
-        float3 rgb=color*(rim+halo);
-        float alpha=clamp(rim+halo,0.0,.93);
-        // A legible V, no face or flame silhouette. Organic motion bends the
-        // arms slightly; the negative space remains open throughout the cycle.
-        float breath=sin(t*1.6);
-        float noise=sin(t*1.13)*.55+sin(t*2.31+.7)*.27+sin(t*.71+2)*.18;
-        float hop=done && age<1.2 ? sin(age*10.053)*exp(-age*2.8)*3.6 : 0;
-        float2 q=p-center+float2(0,hop);
-        q/=float2(1-breath*.009+voice*.02,1+breath*.016+voice*.05);
-        float sway=(thinking ? 1.1:.6)*noise;
-        q.x-=sway*(.4-q.y/36);
-        float2 a=float2(-12.6,-8.4), b=float2(-2.6,13.0), c=float2(17.4,-15.4);
-        a.x-=voice*.55; c.x+=voice*.7;
-        float vd=min(seg(q,a,b),seg(q,b,c))-2.7;
-        float core=1-smoothstep(-.65,.7,vd);
-        float aura=exp(-max(vd,0.0)/3.3)*.20;
-        float glimmer=.72+.12*sin(t*2.2-q.y*.13)+voice*.12;
-        float3 vc=fire(clamp(.82-q.y*.005+noise*.04+voice*.08,0.0,1.0));
-        if(done) vc=mix(float3(.56,.84,.68),float3(1,.96,.82),.55);
-        if(failed) vc=float3(1,.416,.36);
-        float va=clamp(core+aura,0.0,1.0);
-        rgb=mix(rgb,vc*glimmer,core)+vc*aura*(1-core);
-        alpha=va+alpha*(1-va);
+        float thickness=1.0 + (listening ? voice*1.0 : 0);
+        float rim=exp(-d*d/(thickness*thickness))*energy*.85;
+        float halo=exp(-abs(d)/(4.2+(listening ? voice*4.5 : 0)))*energy*.14;
+        // Keep the centre quiet enough for readable type; most depth stays near
+        // the lower edge and around the ends of the capsule.
+        float inside=1-smoothstep(-.5,1.5,d);
+        float under=exp(-pow((p.y-76)/13,2.0));
+        float pool=inside*under*(listening ? .065+voice*.15 : (thinking ? .075+.07*comet : .035));
+        float glow=rim+halo+pool;
+        float3 rgb=color*glow;
+        float alpha=clamp(glow,0.0,.96);
         // RGB stays premultiplied for a transparent CAMetalLayer.
         return float4(min(rgb,float3(alpha)),alpha);
     }

@@ -8,7 +8,37 @@ import VeloceCore
 struct VeloceMain {
     @MainActor static func main() {
         let args = CommandLine.arguments
-        if let index = args.firstIndex(of: "--verify-audio-import"), args.indices.contains(index + 1) {
+        if let index = args.firstIndex(of: "--verify-meeting-workflows"), args.indices.contains(index + 1) {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            Task {
+                do {
+                    try await MeetingWorkflowDiagnostics.verify(directory: URL(fileURLWithPath: args[index + 1]))
+                    print("Meeting queue, history, cancellation and Finder exports verified"); exit(0)
+                } catch { fputs("Meeting workflow check: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+            NSApp.run()
+        } else if let index = args.firstIndex(of: "--verify-finder-service"), args.indices.contains(index + 1) {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            do {
+                let directory = URL(fileURLWithPath: args[index + 1]).absoluteURL
+                try MeetingSidecar.verify(directory: directory)
+                let source = directory.appendingPathComponent("Entretien partagé.mp4")
+                let pasteboard = NSPasteboard.withUniqueName()
+                defer { pasteboard.releaseGlobally() }
+                pasteboard.writeObjects([source as NSURL])
+                let service = FinderTranscriptionService()
+                var delivered: [URL] = []
+                service.onFiles = { urls, _ in delivered = urls }
+                var failure: NSString?
+                service.transcribeFiles(pasteboard, userData: nil, error: &failure)
+                guard failure == nil, delivered.map(\.absoluteURL) == [source.absoluteURL] else {
+                    throw VeloceError.message("Le service Finder n’a pas reçu le fichier sélectionné.")
+                }
+                print("Finder service and sidecars verified")
+            } catch { fputs("Finder service check: \(error.localizedDescription)\n", stderr); exit(1) }
+        } else if let index = args.firstIndex(of: "--verify-audio-import"), args.indices.contains(index + 1) {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)
             Task {
@@ -69,7 +99,7 @@ enum DesignExport {
             .background(VeloceTheme.paper).environment(\.colorScheme, .dark)
         let meetingImage = try nativeSnapshot(meetingView, width: 820)
         try write(meetingImage, to: directory.appendingPathComponent("meetings.png"))
-        let gifURL = directory.appendingPathComponent("living-v.gif")
+        let gifURL = directory.appendingPathComponent("pill-voice.gif")
         guard let gif = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, 36, nil) else { return }
         CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
         for frame in 0..<36 {
@@ -85,6 +115,29 @@ enum DesignExport {
             }
         }
         guard CGImageDestinationFinalize(gif) else { throw VeloceError.message("Unable to export animation") }
+        let glyphURL = directory.appendingPathComponent("menu-glyph.gif")
+        guard let glyphGIF = CGImageDestinationCreateWithURL(glyphURL as CFURL, UTType.gif.identifier as CFString, 36, nil) else {
+            throw VeloceError.message("Unable to export menu glyph")
+        }
+        CGImageDestinationSetProperties(glyphGIF, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        for frame in 0..<36 {
+            let t = Double(frame) / 9
+            let phase: PillPhase = frame < 18 ? .listening : .thinking
+            let level = 0.2 + 0.7 * pow(max(0, sin(t * 4.2)), 2)
+            let preview = HStack(spacing: 12) {
+                Image(nsImage: MenuGlyphDrawing.image(phase: phase, level: level, time: t))
+                    .renderingMode(.template).frame(width: 18, height: 18)
+                Text(phase == .listening ? "À l’écoute" : "Transcription…")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white).frame(width: 200, height: 48)
+            .background(Color(red: 0.12, green: 0.12, blue: 0.13))
+            .environment(\.colorScheme, .dark)
+            let frameImage = try nativeSnapshot(preview, width: 200)
+            CGImageDestinationAddImage(glyphGIF, frameImage,
+                [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1.0 / 9]] as CFDictionary)
+        }
+        guard CGImageDestinationFinalize(glyphGIF) else { throw VeloceError.message("Unable to save menu glyph animation") }
         print(directory.path)
     }
     private static var gallery: some View {
@@ -93,10 +146,10 @@ enum DesignExport {
                 VeloceMark(size: 32, color: VeloceTheme.gold)
                 Text("Véloce").font(.system(size: 30, weight: .medium, design: .rounded))
                 Spacer()
-                Text("UN V QUI PREND VIE").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5)
+                Text("LA VOIX PREND VIE").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5)
             }.padding(.bottom, 12)
             row(.idle, title: "Une présence discrète", subtitle: "Même verre, mêmes couleurs", time: 0)
-            row(.listening, title: "À vous la parole", subtitle: "Le V respire avec votre voix", level: 0.7, time: 0.4)
+            row(.listening, title: "À vous la parole", subtitle: "La lumière suit votre voix", level: 0.7, time: 0.4)
             row(.thinking, title: "Vos mots prennent forme…", subtitle: "La lumière fait le tour du verre", time: 0.7)
             row(.success, title: "C’est écrit", subtitle: "Un petit élan, puis le calme", time: 0.8)
             Text("Études d’états visuels · Aucun microphone ni modèle actif")

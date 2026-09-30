@@ -1,27 +1,29 @@
 # Véloce — handoff UI pour Claude Code
 
-**Demande de Cédric, 30 septembre 2026.** La dictée fonctionne « archi bien ». La petite pill n'a pas encore la beauté de Famulus : reprendre réellement son rendu et créer un beau **V vivant** pour Véloce. Garder la pill et ses couleurs ; remplacer la flamme, sans nouvelle mascotte. Ce handoff porte sur la pill et l'identité visuelle, pas sur le moteur ni une refonte générale de l'app.
+**Dernière demande de Cédric, 30 septembre 2026.** Garder une **pill simple, sans logo V**, avec une lumière et des couleurs qui réagissent davantage à la voix. L’ensemble doit vivre plus. Ajouter une présentation discrète par **petit glyphe animé dans la barre de menus**, au choix dans les réglages. Cette demande remplace le précédent brief sur un V animé dans la pill.
 
-## Référence et écart actuel
+Projet : `/Users/cedric/Dev/veloce` — GitHub : https://github.com/nitroshady4000/veloce. La dictée fonctionne déjà ; travailler la présentation avec les états et actions existants. Lire `git status` avant toute modification : les fonctions Dictée et Réunions évoluent en parallèle.
 
-Projet : `/Users/cedric/Dev/veloce` — GitHub : https://github.com/nitroshady4000/veloce. Base UI inspectée : `5a16e2b`. Référence : `/Users/cedric/Dev/famulus/app/poc`, commit inspecté `b892f517` ; lire les sources présentes avant de travailler, Famulus évolue en parallèle.
+## Direction visuelle actuelle
 
-- **`Skin.swift`** : skin **Feu follet** par défaut, `DropGlass` (vers ligne 270), tintes et composition native Liquid Glass. Famulus fond une capsule et un bulbe via le conteneur de verre ; sa forme exacte sert au fond et au clipping.
-- **`SkinFeuFollet.swift`** : `WispGeometry` (ligne 36), union douce commune au verre et au shader, croissance depuis le bulbe, lumière intérieure, liseré et transitions. **`Magic.swift`** : palette et mouvement organique. **`Pill.swift`** : proportions, typographie, placement et comportements.
-- Repères : hauteur 56 pt, bulbe +5 pt, fusion 12 pt, bas du verre à 44 pt au-dessus du `visibleFrame`, caractère 40,48 × 44 pt. Blanc 95/66/46 %, ambre `#FFB547`, or `#FFD66B`, corail `#FF6F5E`, magenta `#F2479B`, violet `#8E5CFF`, cyan `#3FD4FF`, succès menthe `#8FD6AE`.
+- Capsule de 360 × 56 pt, fond de verre sombre, texte simple et lisible, aucun logo ni mascotte dans la pill. Éviter une zone vide réservée à l’ancien V.
+- Réaction voix visiblement amplifiée, montée rapide et retour doux. La lumière se renforce, s’élargit et traverse les couleurs avec la parole ; une respiration discrète signale l’écoute même avant la première phrase. Cela concerne le rendu visuel, pas le gain audio ou la transcription.
+- Traitement : lumière qui parcourt le contour ; succès : éclair bref couleur menthe ; erreur : corail calme. Arrêter le rendu lorsque la pill est cachée et une fois le succès terminé.
+- Présentation « Barre de menus » : glyphe de 18 pt, cinq traits arrondis qui réagissent à la voix puis ondulent pendant le traitement. Image template native pour rester lisible en mode clair et sombre. Aucun rendu continu au repos.
+- macOS décide du placement initial de l’icône ; Cédric peut la déplacer avec ⌘-glisser vers la caméra. Ne pas tenter de positionner automatiquement un élément natif autour de l’encoche.
+- Respecter Réduire les animations et Réduire la transparence. Avec la réduction des animations, garder une réponse de couleur/amplitude directe à la parole, sans déplacement ni horloge d’animation.
 
-Véloce n'en est actuellement qu'une adaptation compacte : contour Bézier approximatif, shader simplifié, largeur fixe 360 pt, V fait de deux segments arrondis. La proximité des couleurs ne suffit pas. Reprendre la géométrie, la profondeur du verre, les entrées/sorties et le rythme de Famulus ; adapter le signe animé avec une vraie intention graphique. Attention : le mode d'export hors écran utilise volontairement un fond opaque, il ne valide pas la réfraction du verre en situation réelle.
+## Fichiers et interfaces
 
-## Fichiers à travailler dans Véloce
+- `Sources/Veloce/Views/VelocePill.swift` : capsule, textes et boutons ; `PillPhase(appPhase:)` traduit les états existants. `PillVoiceResponse.amplitude(_:)` amplifie seulement la présentation du niveau micro.
+- `Sources/Veloce/Views/PillLight.swift` : une petite couche Metal pour la lumière, enveloppe voix rapide, arrêt quand cachée. `previewTime` permet de figer des images sans horloge.
+- `Sources/Veloce/Views/RecordingHUDView.swift` : branchement de la dictée et callbacks Arrêter/Annuler.
+- `Sources/Veloce/Views/MenuGlyph.swift` : `MenuGlyph(phase:level:)` pour le label de `MenuBarExtra`, images natives renouvelées pendant l’écoute et le traitement. `MenuGlyphAnimator` est également utilisable directement.
+- `Sources/Veloce/VeloceApp.swift` : panneau non activant, placement, choix de présentation ; `AppModel.presentationMode` propose `.pill` / `.menuBar`. Coordonner les changements de ces fichiers partagés avec le développeur du moteur.
 
-- `Sources/Veloce/Views/VelocePill.swift` : vue de présentation pure, géométrie, texte et contrôles ; `PillPhase` couvre repos/écoute/traitement/succès/erreur.
-- `Sources/Veloce/Views/PillLight.swift` : V et lumière dans une seule couche Metal, enveloppe voix, arrêt du rendu caché, réduction des animations.
-- `Sources/Veloce/Views/RecordingHUDView.swift` : branchement des états existants. `Sources/Veloce/VeloceApp.swift` : panneau non activant et placement, seulement si nécessaire.
-- `Sources/Veloce/Views/DesignSystem.swift` (`VeloceMark`), `scripts/make-icon.swift`, `Resources/AppIcon.png` et `.icns` : un même V reconnaissable en logo, icône et pill ; livrer une source vectorielle ou procédurale reproductible. Nom affiché **Véloce**, identifiants techniques **Veloce**.
+Les couleurs restent inspirées de Famulus, référence en lecture seule : `/Users/cedric/Dev/famulus/app/poc`. Repères : blanc 95/66/46 %, ambre `#FFB547`, or `#FFD66B`, corail `#FF6F5E`, magenta `#F2479B`, violet `#8E5CFF`, cyan `#3FD4FF`, succès menthe `#8FD6AE`. Toute reprise de code tiers doit conserver les mentions de licence dans `THIRD_PARTY_NOTICES.md`.
 
-Préserver les callbacks et le fonctionnement Fn, l'insertion, les permissions et l'ASR local déjà validés. Le module Réunions est développé en parallèle : ne pas remplacer ses fichiers ou écraser ses branchements. Lire `git status` et coordonner les fichiers partagés. Famulus reste une référence en lecture seule. Toute reprise de code doit conserver les mentions de licence applicables dans `THIRD_PARTY_NOTICES.md`.
-
-## Construire et comparer sans interrompre l'app utilisée
+## Construire et vérifier
 
 Depuis `/Users/cedric/Dev/veloce` :
 
@@ -31,6 +33,6 @@ VELOCE_APP_OUTPUT="$PWD/build/ui-claude/Veloce.app" bash scripts/build-app.sh
 build/ui-claude/Veloce.app/Contents/MacOS/Veloce --render-design build/ui-claude/renders
 ```
 
-L'export produit PNG et GIF sans microphone ni modèle. Ne pas écraser `build/Veloce.app`, ne pas quitter ou relancer la version utilisée pendant un test. La signature ad hoc peut nécessiter une nouvelle autorisation après compilation ; conserver le bundle ID `com.veloce.dictation` et le guide existant.
+L’export est sans microphone ni modèle. Il utilise volontairement un fond opaque pour la pill ; vérifier aussi le verre en situation réelle sur fonds clair et sombre. Préparer une version distincte pendant que Cédric teste, préserver la signature et le guide d’autorisations existants.
 
-**Acceptation :** comparaison visuelle avec Famulus, verre et lumière convaincants sur fonds clair/sombre, V lisible petit et animé avec la voix, traitement et succès distincts, aucun vol de focus ni clipping, aucun rendu continu quand caché, options d'accessibilité respectées. Fournir une courte animation et les icônes, compiler et exécuter les tests existants ; validation de la vraie pill avec Cédric après son test en cours.
+**Acceptation :** pill sans V, voix normale produisant une lumière franchement visible, traitements et succès distincts, texte lisible, aucun vol de focus, aucun clipping, mode barre de menus fonctionnel, arrêt du rendu caché/au repos, accessibilité respectée. Fournir une courte animation et compiler avec les tests existants.

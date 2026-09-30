@@ -4,6 +4,14 @@ import SwiftUI
 import VeloceCore
 
 enum DictationPhase { case idle, preparing, ready, recording, transcribing, error }
+enum DictationPresentationMode: String, CaseIterable { case pill, menuBar }
+enum DictationOutcome { case none, inserted, available, empty, failed }
+enum TextInstructionPhase { case idle, recording, transcribing }
+struct TextInstructionHandlers {
+    let onText: (String) -> Void
+    let onUpdate: (TextInstructionPhase, String?) -> Void
+    let onLevel: (Double) -> Void
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -11,6 +19,31 @@ final class AppModel: ObservableObject {
     @Published var statusMessage = "Une idée ? Dites-la."
     @Published var level: Double = 0
     @Published private(set) var transcriptInserted = false
+    @Published private(set) var isHandsFree = false
+    @Published var presentationMode: DictationPresentationMode {
+        didSet {
+            UserDefaults.standard.set(presentationMode.rawValue, forKey: "dictationPresentation")
+            onPresentationModeChange?(presentationMode)
+        }
+    }
+    @Published var finderExportFormat: String {
+        didSet { UserDefaults.standard.set(finderExportFormat, forKey: "finderExportFormat") }
+    }
+    @Published var doubleFnEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(doubleFnEnabled, forKey: "doubleFnEnabled")
+            hotkey.setDoubleTapEnabled(doubleFnEnabled)
+            refreshPermissions()
+        }
+    }
+    @Published var cleanupEnabled: Bool {
+        didSet { UserDefaults.standard.set(cleanupEnabled, forKey: "cleanupEnabled") }
+    }
+    @Published var snippets: [VoiceSnippet] {
+        didSet {
+            if let data = try? JSONEncoder().encode(snippets) { UserDefaults.standard.set(data, forKey: "voiceSnippets") }
+        }
+    }
     @Published var selectedModel: SpeechModel {
         didSet { UserDefaults.standard.set(selectedModel.rawValue, forKey: "model") }
     }
@@ -42,7 +75,17 @@ final class AppModel: ObservableObject {
     var allPermissionsReady: Bool { microphoneGranted && inputReady }
     @Published var engineInstalled = false
     @Published private(set) var meetingBusy = false
-    var isBusy: Bool { meetingBusy || phase == .preparing || phase == .recording || phase == .transcribing }
+    @Published private(set) var textProcessingBusy = false
+    @Published private(set) var pendingDictationCount = 0
+    @Published private(set) var isDictationProcessing = false
+    @Published private(set) var lastDictationOutcome: DictationOutcome = .none
+    var isBusy: Bool { meetingBusy || textProcessingBusy || pendingDictationCount > 0 || phase == .preparing || phase == .recording || phase == .transcribing }
+    var canStartDictation: Bool {
+        !meetingBusy && !textProcessingBusy && phase != .preparing && capture == nil
+            && !instructionProcessing && textInstruction == nil && pipeline.count < pipeline.capacity
+            && engineReady && microphoneGranted
+    }
+    var textProcessingUnavailableReason: String? { LocalTextProcessor.unavailableReason }
     var isRecording: Bool { phase == .recording }
     var engineReady: Bool { loadedModel == selectedModel && phase != .preparing }
     private let permissions = PermissionCoordinator()
@@ -55,20 +98,60 @@ final class AppModel: ObservableObject {
             self?.loadedModel = model
             self?.phase = .ready
         }
+        meetings.onSidecarReady = { record, source, format in
+            _ = try MeetingSidecar.write(record: record, beside: source, format: format)
+        }
         return meetings
     }()
     private let recorder = AudioRecorder()
     private let hotkey = FnKeyMonitor()
-    private let inserter = TextInserter()
-    private var target: NSRunningApplication?
-    private var recordingStarted: Date?
+    private lazy var textProcessingController: TextProcessingController = {
+        let controller = TextProcessingController()
+        controller.canBegin = { [weak self] in self?.isBusy == false }
+        controller.onBusyChange = { [weak self] in self?.textProcessingBusy = $0 }
+        controller.onVoiceStart = { [weak self] handlers in self?.startTextInstruction(handlers) ?? false }
+        controller.onVoiceFinish = { [weak self] in
+            guard self?.textInstruction != nil else { return }
+            self?.finishRecording()
+        }
+        controller.onVoiceCancel = { [weak self] in
+            guard self?.textInstruction != nil else { return }
+            self?.cancel()
+        }
+        return controller
+    }()
+    private struct CaptureContext {
+        let id = UUID()
+        let started = Date()
+        let model: SpeechModel
+        let language: String
+        let vocabulary: String
+        let snippets: [VoiceSnippet]
+        let cleanup: Bool
+        let target: NSRunningApplication?
+        let inserter: TextInserter
+        let instruction: TextInstructionHandlers?
+    }
+    private struct DictationJob {
+        let capture: CaptureContext
+        let audioURL: URL
+        let duration: Double
+    }
+    private var capture: CaptureContext?
+    private var pipeline = DictationPipeline<DictationJob>(capacity: 4)
+    private var processingTask: Task<Void, Never>?
+    private var pipelineGeneration = UUID()
+    private var processingMessage = "Vos mots prennent forme…"
+    private var instructionProcessing = false
     private var recordingLimit: Task<Void, Never>?
     private var hudDismissal: Task<Void, Never>?
     private var operation: Task<Void, Never>?
     private var generation = UUID()
     private var heldFn = false
+    private var textInstruction: TextInstructionHandlers?
     private var permissionTimer: Timer?
     var onHUDVisibility: ((Bool) -> Void)?
+    var onPresentationModeChange: ((DictationPresentationMode) -> Void)?
     private var historyURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Veloce/history.json")
@@ -76,13 +159,24 @@ final class AppModel: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
-        selectedModel = SpeechModel(rawValue: defaults.string(forKey: "model") ?? "") ?? .precision
+        selectedModel = SpeechModel(rawValue: defaults.string(forKey: "model") ?? "") ?? .balanced
+        presentationMode = DictationPresentationMode(rawValue: defaults.string(forKey: "dictationPresentation") ?? "") ?? .pill
+        finderExportFormat = defaults.string(forKey: "finderExportFormat") == "md" ? "md" : "txt"
+        doubleFnEnabled = defaults.object(forKey: "doubleFnEnabled") as? Bool ?? true
+        cleanupEnabled = defaults.bool(forKey: "cleanupEnabled")
+        if let data = defaults.data(forKey: "voiceSnippets"), let saved = try? JSONDecoder().decode([VoiceSnippet].self, from: data) {
+            snippets = saved
+        } else { snippets = [] }
         vocabulary = defaults.string(forKey: "vocabulary") ?? ""
         language = defaults.string(forKey: "language") ?? "French"
         keepHistory = defaults.bool(forKey: "keepHistory")
         if keepHistory, let data = try? Data(contentsOf: historyURL), let saved = try? JSONDecoder().decode([Transcript].self, from: data) { history = saved }
         engineInstalled = engine.installed
-        recorder.onLevel = { [weak self] value in self?.level = value }
+        hotkey.setDoubleTapEnabled(doubleFnEnabled)
+        recorder.onLevel = { [weak self] value in
+            self?.level = value
+            self?.textInstruction?.onLevel(value)
+        }
         engine.onStatus = { [weak self] state in
             guard let self, self.phase == .preparing else { return }
             if state == "loading" { self.statusMessage = "Téléchargement et chargement du modèle…" }
@@ -121,7 +215,11 @@ final class AppModel: ObservableObject {
             }, onRelease: { [weak self] in
                 self?.heldFn = false
                 if self?.isRecording == true { self?.finishRecording() }
-            }, onCancel: { [weak self] in self?.heldFn = false; self?.cancel() })
+            }, onCancel: { [weak self] in self?.heldFn = false; self?.cancel() }, onHandsFree: { [weak self] in
+                guard let self, self.isRecording else { return }
+                self.isHandsFree = true
+                self.statusMessage = "Mains libres. Appuyez sur Fn pour terminer, Échap pour annuler."
+            })
         }
         hotkeyReady = accessibilityGranted && hotkey.isRunning
         if microphoneInterrupted {
@@ -208,85 +306,278 @@ final class AppModel: ObservableObject {
         if isRecording { finishRecording() } else { startRecording(fromHotkey: false) }
     }
     private func startRecording(fromHotkey: Bool) {
-        guard !isBusy else { return }
-        guard engineReady else { statusMessage = "Chargez d’abord un modèle dans l’onglet Modèles."; return }
-        guard microphoneGranted else { statusMessage = "Autorisez le microphone avant de dicter."; return }
+        // A new microphone capture can overlap our FIFO processor, but never
+        // meetings, installation, selection rewriting or a spoken instruction.
+        guard !meetingBusy, !textProcessingBusy, phase != .preparing, capture == nil,
+              !instructionProcessing, textInstruction == nil || pipeline.count == 0 else {
+            rejectHotkeyCapture(fromHotkey); return
+        }
+        guard engineReady else {
+            statusMessage = "Chargez d’abord un modèle dans l’onglet Modèles."
+            rejectHotkeyCapture(fromHotkey); return
+        }
+        guard microphoneGranted else {
+            statusMessage = "Autorisez le microphone avant de dicter."
+            rejectHotkeyCapture(fromHotkey); return
+        }
         if fromHotkey && !heldFn { return }
-        target = NSWorkspace.shared.frontmostApplication
-        if target?.processIdentifier == ProcessInfo.processInfo.processIdentifier { target = nil }
+        let instruction = textInstruction
+        if instruction == nil, !pipeline.beginCapture() {
+            statusMessage = "Quatre dictées sont déjà en cours. Attendez un instant."
+            rejectHotkeyCapture(fromHotkey); return
+        }
+        let snippetPhrases = snippets.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(\.phrase).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let combinedVocabulary = ([vocabulary] + snippetPhrases).joined(separator: "\n")
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let target = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : frontmost
+        let inserter = TextInserter()
+        if instruction == nil { inserter.captureTarget(target) }
+        let context = CaptureContext(model: loadedModel ?? selectedModel, language: language,
+                                     vocabulary: combinedVocabulary.unicodeScalars.count <= 4_000 ? combinedVocabulary : vocabulary,
+                                     snippets: snippets, cleanup: cleanupEnabled, target: target,
+                                     inserter: inserter, instruction: instruction)
         do {
             try recorder.start()
-            recordingStarted = Date()
-            inserter.captureTarget(target)
-            hudDismissal?.cancel()
-            generation = UUID()
-            phase = .recording; statusMessage = "À vous. On vous écoute."
-            onHUDVisibility?(true)
+            capture = context
+            isHandsFree = false
+            transcriptInserted = false
+            instruction?.onUpdate(.recording, nil)
+            updateDictationPresentation()
             recordingLimit = Task {
                 try? await Task.sleep(nanoseconds: 120_000_000_000)
-                guard !Task.isCancelled, isRecording else { return }
+                guard !Task.isCancelled, self.capture?.id == context.id else { return }
                 finishRecording()
             }
-        } catch { phase = .error; statusMessage = error.localizedDescription }
+        } catch {
+            if instruction == nil { pipeline.cancelCapture() }
+            rejectHotkeyCapture(fromHotkey)
+            completeTextInstruction(error: error.localizedDescription)
+            updateDictationPresentation()
+            if !isDictationProcessing { phase = .error }
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func rejectHotkeyCapture(_ fromHotkey: Bool) {
+        if fromHotkey { heldFn = false; isHandsFree = false; hotkey.resetRecordingState() }
     }
 
     private func finishRecording() {
-        guard isRecording else { return }
+        guard let context = capture else { return }
+        capture = nil
+        heldFn = false; isHandsFree = false; hotkey.resetRecordingState()
         recordingLimit?.cancel(); recordingLimit = nil
-        let duration = Date().timeIntervalSince(recordingStarted ?? Date())
-        let token = generation
+        let duration = Date().timeIntervalSince(context.started)
         do {
             let url = try recorder.stop()
             level = 0
             guard duration >= 0.25 else {
                 try? FileManager.default.removeItem(at: url)
-                phase = .ready; statusMessage = "Maintenez Fn un peu plus longtemps."; onHUDVisibility?(false); return
+                if context.instruction == nil { pipeline.cancelCapture() }
+                completeTextInstruction(error: "Parlez un peu plus longtemps pour donner votre consigne.")
+                updateDictationPresentation(hideWhenIdle: true)
+                if !isDictationProcessing { statusMessage = "Maintenez Fn un peu plus longtemps." }
+                return
             }
-            phase = .transcribing; statusMessage = "Vos mots prennent forme…"
-            let model = loadedModel ?? selectedModel
-            let vocabularySnapshot = vocabulary
-            let languageSnapshot = language
-            operation = Task {
-                defer { try? FileManager.default.removeItem(at: url) }
+            if context.instruction != nil {
+                processInstruction(context: context, audioURL: url)
+            } else {
+                pipeline.finishCapture(DictationJob(capture: context, audioURL: url, duration: duration))
+                drainDictations()
+            }
+            updateDictationPresentation()
+        } catch {
+            if context.instruction == nil { pipeline.cancelCapture() }
+            completeTextInstruction(error: error.localizedDescription)
+            updateDictationPresentation(hideWhenIdle: true)
+            if !isDictationProcessing { phase = .error; statusMessage = error.localizedDescription }
+        }
+    }
+
+    private func drainDictations() {
+        guard processingTask == nil else { return }
+        let token = pipelineGeneration
+        processingTask = Task {
+            while !Task.isCancelled, token == pipelineGeneration, let job = pipeline.startNext() {
+                updateDictationPresentation()
+                await processDictation(job, token: token)
+                guard !Task.isCancelled, token == pipelineGeneration else { break }
+                pipeline.completeActive()
+                updateDictationPresentation()
+            }
+            guard token == pipelineGeneration else { return }
+            processingTask = nil
+            updateDictationPresentation()
+            if capture == nil { dismissHUDLater() }
+        }
+    }
+
+    private func processDictation(_ job: DictationJob, token: UUID) async {
+        defer { try? FileManager.default.removeItem(at: job.audioURL) }
+        let context = job.capture
+        lastDictationOutcome = .none
+        do {
+            let start = Date()
+            // A crashed worker may need reloading; only the FIFO processor loads.
+            if loadedModel != context.model {
+                processingMessage = "Préparation du modèle pour la dictée en attente…"
+                updateDictationPresentation()
+                _ = try await engine.request("load", params: ["model": context.model.rawValue], timeout: 1800)
+                guard token == pipelineGeneration, !Task.isCancelled else { return }
+                loadedModel = context.model
+            }
+            processingMessage = "Vos mots prennent forme…"
+            updateDictationPresentation()
+            var params: [String: Any] = ["audio_path": job.audioURL.path, "model": context.model.rawValue, "context": context.vocabulary]
+            if context.language != "Auto" { params["language"] = context.language }
+            let result = try await engine.request("transcribe", params: params)
+            guard token == pipelineGeneration, !Task.isCancelled else { return }
+            let rawText = (result.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawText.isEmpty else {
+                lastDictationOutcome = .empty
+                transcriptInserted = false
+                processingMessage = "Aucune parole détectée."
+                return
+            }
+            let snippet = DictationTextPlan.snippet(for: rawText, in: context.snippets)
+            var text = snippet ?? rawText
+            var transcript = Transcript(text: text, model: context.model,
+                                        duration: result.audio_duration_seconds ?? job.duration,
+                                        latency: Date().timeIntervalSince(start), rawText: rawText)
+            history.insert(transcript, at: 0)
+            history = Array(history.prefix(keepHistory ? 100 : 4))
+            if keepHistory { saveHistory() }
+            var cleanupFailed = false
+            if context.cleanup && snippet == nil {
+                processingMessage = "Un peu de ponctuation, sans perdre vos mots…"
+                updateDictationPresentation()
                 do {
-                    let start = Date()
-                    var params: [String: Any] = ["audio_path": url.path, "model": model.rawValue, "context": vocabularySnapshot]
-                    if languageSnapshot != "Auto" { params["language"] = languageSnapshot }
-                    let result = try await engine.request("transcribe", params: params)
-                    guard token == generation, !Task.isCancelled else { return }
-                    let text = (result.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else {
-                        phase = .ready; statusMessage = "Aucune parole détectée."; onHUDVisibility?(false); return
-                    }
-                    let transcript = Transcript(text: text, model: model, duration: result.audio_duration_seconds ?? duration, latency: Date().timeIntervalSince(start))
-                    history.insert(transcript, at: 0)
-                    history = Array(history.prefix(keepHistory ? 100 : 1))
+                    text = try await LocalTextProcessor.clean(rawText)
+                    guard token == pipelineGeneration, !Task.isCancelled else { return }
+                    transcript.text = text
+                    transcript.rawText = text == rawText ? nil : rawText
+                    transcript.latency = Date().timeIntervalSince(start)
+                    if let index = history.firstIndex(where: { $0.id == transcript.id }) { history[index] = transcript }
                     if keepHistory { saveHistory() }
-                    let inserted = await inserter.insert(text, into: target)
-                    guard token == generation, !Task.isCancelled else { return }
-                    transcriptInserted = inserted
-                    phase = .ready
-                    statusMessage = inserted ? "C’est écrit. À la prochaine idée." : "Votre texte est prêt. Cliquez sur Copier."
-                    hudDismissal = Task {
-                        try? await Task.sleep(nanoseconds: 1_400_000_000)
-                        guard !Task.isCancelled, token == generation, phase == .ready else { return }
-                        onHUDVisibility?(false)
-                    }
                 } catch {
-                    guard token == generation, !Task.isCancelled else { return }
-                    phase = .error; statusMessage = error.localizedDescription; onHUDVisibility?(false)
+                    guard token == pipelineGeneration, !Task.isCancelled else { return }
+                    cleanupFailed = true; text = rawText
                 }
             }
-        } catch { phase = .error; statusMessage = error.localizedDescription; onHUDVisibility?(false) }
+            let insertion = await context.inserter.insertWithReceipt(text, into: context.target)
+            guard token == pipelineGeneration, !Task.isCancelled else { return }
+            if let receipt = insertion.receipt {
+                // Captures begun before our own paste still refer to its old caret.
+                // Rebase only those exact targets, never a user-moved selection.
+                capture?.inserter.advanceAfterOwnInsertion(receipt)
+                for pending in pipeline.pending { pending.capture.inserter.advanceAfterOwnInsertion(receipt) }
+            }
+            transcriptInserted = insertion.inserted
+            lastDictationOutcome = insertion.inserted ? .inserted : .available
+            processingMessage = cleanupFailed
+                ? (insertion.inserted ? "C’est écrit. Nettoyage indisponible ; brut conservé." : "Dictée brute prête. Cliquez sur Copier.")
+                : insertion.inserted ? "C’est écrit. À la prochaine idée." : "Votre texte est prêt. Cliquez sur Copier."
+        } catch {
+            guard token == pipelineGeneration, !Task.isCancelled else { return }
+            lastDictationOutcome = .failed
+            transcriptInserted = false
+            processingMessage = error.localizedDescription
+        }
+    }
+
+    private func processInstruction(context: CaptureContext, audioURL: URL) {
+        guard let instruction = context.instruction else { return }
+        generation = UUID()
+        let token = generation
+        lastDictationOutcome = .none
+        instructionProcessing = true
+        instruction.onUpdate(.transcribing, nil)
+        operation = Task {
+            defer { try? FileManager.default.removeItem(at: audioURL) }
+            do {
+                var params: [String: Any] = ["audio_path": audioURL.path, "model": context.model.rawValue, "context": context.vocabulary]
+                if context.language != "Auto" { params["language"] = context.language }
+                let result = try await engine.request("transcribe", params: params)
+                guard token == generation, !Task.isCancelled else { return }
+                let text = (result.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { instruction.onText(text) }
+                completeTextInstruction(error: text.isEmpty ? "Aucune consigne détectée. Réessayez ou écrivez-la." : nil)
+                instructionProcessing = false
+                updateDictationPresentation(hideWhenIdle: true)
+                statusMessage = "Consigne prête. Vérifiez-la puis lancez la réécriture."
+            } catch {
+                guard token == generation, !Task.isCancelled else { return }
+                completeTextInstruction(error: error.localizedDescription)
+                instructionProcessing = false
+                updateDictationPresentation(hideWhenIdle: true)
+                phase = .error; statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func updateDictationPresentation(hideWhenIdle: Bool = false) {
+        pendingDictationCount = pipeline.count
+        isDictationProcessing = pipeline.count > 0
+        if capture != nil {
+            phase = .recording
+            statusMessage = isHandsFree ? "Mains libres. Fn termine, Échap annule." : "À vous. On vous écoute."
+            if pipeline.count > 0 { statusMessage += " \(pipeline.count) dictée\(pipeline.count > 1 ? "s" : "") en traitement." }
+        } else if pipeline.count > 0 {
+            phase = .transcribing; statusMessage = processingMessage
+        } else if instructionProcessing {
+            phase = .transcribing; statusMessage = "Votre consigne prend forme…"
+        } else {
+            switch lastDictationOutcome {
+            case .failed: phase = .error
+            case .empty: phase = .idle
+            default: phase = loadedModel == nil ? .idle : .ready
+            }
+            statusMessage = processingMessage
+        }
+        if capture != nil || pipeline.count > 0 || instructionProcessing {
+            hudDismissal?.cancel(); onHUDVisibility?(true)
+        } else if hideWhenIdle {
+            hudDismissal?.cancel(); onHUDVisibility?(false)
+        }
+    }
+
+    private func dismissHUDLater() {
+        hudDismissal?.cancel()
+        hudDismissal = Task {
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            guard !Task.isCancelled, capture == nil, pipeline.count == 0, !instructionProcessing else { return }
+            onHUDVisibility?(false)
+        }
     }
 
     func cancel() {
-        guard phase == .recording || phase == .transcribing else { return }
-        generation = UUID(); recordingLimit?.cancel(); operation?.cancel()
-        recorder.cancel(); level = 0
-        if phase == .transcribing { engine.stop(); loadedModel = nil }
-        phase = loadedModel == nil ? .idle : .ready
-        statusMessage = "Dictée annulée."; onHUDVisibility?(false)
+        guard capture != nil || instructionProcessing || pipeline.count > 0 else { return }
+        heldFn = false; isHandsFree = false; hotkey.resetRecordingState()
+        if let context = capture {
+            capture = nil
+            recordingLimit?.cancel(); recordingLimit = nil
+            recorder.cancel(); level = 0
+            if context.instruction == nil { pipeline.cancelCapture() }
+            else { completeTextInstruction(error: nil) }
+            updateDictationPresentation(hideWhenIdle: true)
+            if !isDictationProcessing { statusMessage = "Dictée annulée." }
+        } else if instructionProcessing {
+            generation = UUID(); operation?.cancel(); engine.stop(); loadedModel = nil
+            instructionProcessing = false
+            completeTextInstruction(error: nil)
+            updateDictationPresentation(hideWhenIdle: true)
+            statusMessage = "Consigne annulée."
+        } else {
+            cancelPendingDictations()
+        }
+    }
+
+    func cancelPendingDictations() {
+        guard pipeline.count > 0 else { return }
+        for job in pipeline.removePending() { try? FileManager.default.removeItem(at: job.audioURL) }
+        updateDictationPresentation(hideWhenIdle: true)
+        statusMessage = pipeline.active == nil ? "Dictées en attente annulées." : "La dictée en cours continue ; les suivantes sont annulées."
     }
     func copyTranscript(_ text: String) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
@@ -295,11 +586,41 @@ final class AppModel: ObservableObject {
     func clearHistory() {
         history = []; try? FileManager.default.removeItem(at: historyURL)
     }
+    func showTextProcessing() {
+        guard !isBusy else { return }
+        textProcessingController.show()
+    }
+    private func startTextInstruction(_ handlers: TextInstructionHandlers) -> Bool {
+        guard !isBusy else {
+            handlers.onUpdate(.idle, "Terminez l’opération en cours avant de dicter une consigne.")
+            return false
+        }
+        textInstruction = handlers
+        startRecording(fromHotkey: false)
+        guard isRecording else {
+            completeTextInstruction(error: statusMessage)
+            return false
+        }
+        return true
+    }
+    private func completeTextInstruction(error: String?) {
+        let handlers = textInstruction
+        textInstruction = nil
+        handlers?.onLevel(0)
+        handlers?.onUpdate(.idle, error)
+    }
+    func addSnippet() { snippets.append(VoiceSnippet()) }
+    func removeSnippet(_ id: UUID) { snippets.removeAll { $0.id == id } }
     private func saveHistory() {
         do {
             try FileManager.default.createDirectory(at: historyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(history).write(to: historyURL, options: .atomic)
         } catch { statusMessage = "Texte prêt ; l’historique n’a pas pu être enregistré." }
     }
-    func shutdown() { hotkey.stop(); recorder.cancel(); engine.stop(); permissionTimer?.invalidate(); recordingLimit?.cancel(); hudDismissal?.cancel(); operation?.cancel() }
+    func shutdown() {
+        textProcessingController.close(); hotkey.stop(); recorder.cancel(); capture = nil
+        pipelineGeneration = UUID(); processingTask?.cancel()
+        for job in pipeline.removePending() { try? FileManager.default.removeItem(at: job.audioURL) }
+        engine.stop(); permissionTimer?.invalidate(); recordingLimit?.cancel(); hudDismissal?.cancel(); operation?.cancel()
+    }
 }

@@ -4,6 +4,7 @@ import VeloceCore
 struct DictationView: View {
     @EnvironmentObject private var model: AppModel
     @State private var copiedID: UUID?
+    @State private var showingRaw: Set<UUID> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -15,7 +16,7 @@ struct DictationView: View {
                         .tracking(-1.6)
                         .lineSpacing(0)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Maintenez **Fn**, parlez, relâchez.\nVotre texte apparaît là où vous écrivez.")
+                    Text(model.doubleFnEnabled ? "Maintenez **Fn**, parlez, relâchez.\nDouble Fn pour parler mains libres." : "Maintenez **Fn**, parlez, relâchez.\nVotre texte apparaît là où vous écrivez.")
                         .font(.system(size: 13))
                         .foregroundStyle(VeloceTheme.secondary)
                         .lineSpacing(5)
@@ -34,7 +35,7 @@ struct DictationView: View {
                     }
                 }
                 .buttonStyle(VeloceButtonStyle())
-                .disabled(model.isBusy && !model.isRecording)
+                .disabled(model.isBusy && !model.isRecording && !model.canStartDictation)
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
                         Circle()
@@ -49,6 +50,11 @@ struct DictationView: View {
                         .foregroundStyle(VeloceTheme.secondary)
                 }
                 Spacer(minLength: 0)
+                if !model.isRecording {
+                    Button("Réécrire un texte…", action: model.showTextProcessing)
+                        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                        .disabled(model.isBusy)
+                }
                 if model.isRecording {
                     Button("Annuler", action: model.cancel)
                         .buttonStyle(.plain)
@@ -95,7 +101,7 @@ struct DictationView: View {
                 }
             } else {
                 VStack(spacing: 10) {
-                    ForEach(model.history.prefix(3)) { transcript in
+                    ForEach(model.history.prefix(10)) { transcript in
                         transcriptCard(transcript)
                     }
                 }
@@ -106,7 +112,7 @@ struct DictationView: View {
     private var primaryTitle: String {
         if model.isRecording { return "Terminer la dictée" }
         if model.phase == .preparing { return "Préparation…" }
-        if model.phase == .transcribing { return "Transcription…" }
+        if model.phase == .transcribing { return model.canStartDictation ? "Nouvelle dictée" : "Transcription…" }
         if !model.microphoneGranted { return "Autoriser le micro" }
         if !model.inputReady { return "Configurer Fn et l’insertion" }
         if !model.engineReady { return "Préparer mon modèle" }
@@ -116,7 +122,7 @@ struct DictationView: View {
     private var primarySymbol: String {
         if model.isRecording { return "stop.fill" }
         if model.phase == .preparing { return "arrow.down" }
-        if model.phase == .transcribing { return "ellipsis" }
+        if model.phase == .transcribing { return model.canStartDictation ? "mic.fill" : "ellipsis" }
         return model.engineReady ? "mic.fill" : "arrow.right"
     }
 
@@ -131,7 +137,7 @@ struct DictationView: View {
     private func transcriptCard(_ transcript: Transcript) -> some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 15) {
-                Text(transcript.text)
+                Text(showingRaw.contains(transcript.id) ? transcript.rawText ?? transcript.text : transcript.text)
                     .font(.system(size: 14))
                     .lineSpacing(5)
                     .textSelection(.enabled)
@@ -141,10 +147,17 @@ struct DictationView: View {
                     Text("·")
                     Text(transcript.model.name)
                     Spacer()
+                    if transcript.rawText != nil {
+                        Button(showingRaw.contains(transcript.id) ? "Texte final" : "Voir le brut") {
+                            if showingRaw.contains(transcript.id) { showingRaw.remove(transcript.id) }
+                            else { showingRaw.insert(transcript.id) }
+                        }
+                        .buttonStyle(.plain).foregroundStyle(VeloceTheme.accent)
+                    }
                     Text(String(format: "%.1f s", transcript.latency))
                         .help("Durée de transcription")
                     Button {
-                        model.copyTranscript(transcript.text)
+                        model.copyTranscript(showingRaw.contains(transcript.id) ? transcript.rawText ?? transcript.text : transcript.text)
                         copiedID = transcript.id
                     } label: {
                         Image(systemName: copiedID == transcript.id ? "checkmark" : "doc.on.doc")
@@ -229,6 +242,6 @@ private struct FnKeyVisual: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.isRecording)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(model.isRecording ? "Dictée en cours, relâchez Fn pour terminer" : "Maintenez la touche Fn pour parler")
+        .accessibilityLabel(model.isRecording ? (model.isHandsFree ? "Dictée mains libres en cours, appuyez sur Fn pour terminer" : "Dictée en cours, relâchez Fn pour terminer") : "Maintenez la touche Fn pour parler")
     }
 }

@@ -15,5 +15,9 @@ jobs:
         run: build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-audio "$RUNNER_TEMP/veloce-meeting-audio"
       - name: Native audio file import (synthetic, no capture)
         run: build/Veloce.app/Contents/MacOS/Veloce --verify-audio-import "$RUNNER_TEMP/veloce-audio-import"
+      - name: Finder service and neighbor transcripts (synthetic)
+        run: build/Veloce.app/Contents/MacOS/Veloce --verify-finder-service "$RUNNER_TEMP/veloce-finder-service"
+      - name: Meeting queue, history and cancellation (synthetic, no models)
+        run: build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-workflows "$RUNNER_TEMP/veloce-meeting-workflows"
       - name: Engine protocol tests (no weights)
         run: python3 -m unittest discover -s Engine -p 'test_*.py' -v

@@ -66,4 +66,80 @@ final class FnKeyStateTests: XCTestCase {
         XCTAssertNil(state.reset())
         XCTAssertNil(state.handle(release).action)
     }
+
+    func testDoubleTapLatchesUntilNextFnAndAllowsOrdinaryTyping() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        XCTAssertEqual(state.handle(press, at: 10).action, .press)
+        XCTAssertNil(state.handle(release, at: 10.1).action)
+        XCTAssertEqual(state.pendingReleaseAt ?? 0, 10.4, accuracy: 0.001)
+        XCTAssertEqual(state.handle(press, at: 10.25).action, .handsFree)
+        XCTAssertNil(state.pendingReleaseAt)
+        XCTAssertNil(state.handle(release, at: 10.3).action)
+        XCTAssertEqual(state.handle(.keyDown(code: 0), at: 11), .init())
+        XCTAssertEqual(state.handle(press, at: 12).action, .release)
+        XCTAssertNil(state.handle(release, at: 12.1).action)
+    }
+
+    func testLongHoldStillFinishesImmediately() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        XCTAssertEqual(state.handle(press, at: 1).action, .press)
+        XCTAssertEqual(state.handle(release, at: 2).action, .release)
+        XCTAssertNil(state.pendingReleaseAt)
+    }
+
+    func testSingleTapDeadlineFinishesExactlyOnce() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        _ = state.handle(press, at: 1)
+        _ = state.handle(release, at: 1.1)
+        XCTAssertEqual(state.handle(.releaseDeadline, at: 1.4).action, .release)
+        XCTAssertNil(state.handle(.releaseDeadline, at: 2).action)
+        XCTAssertEqual(state.handle(press, at: 3).action, .press)
+    }
+
+    func testEscapeCancelsHandsFreeWithoutFnHeld() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        _ = state.handle(press, at: 1)
+        _ = state.handle(release, at: 1.1)
+        _ = state.handle(press, at: 1.2)
+        _ = state.handle(release, at: 1.3)
+        XCTAssertEqual(state.handle(.keyDown(code: 53)), .init(action: .cancel, suppressEvent: true))
+        XCTAssertNil(state.handle(.releaseDeadline).action)
+        XCTAssertNil(state.reset())
+    }
+
+    func testTypingDuringPendingDoubleTapCancelsAndPassesTheKeyThrough() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        _ = state.handle(press, at: 1)
+        _ = state.handle(release, at: 1.1)
+        XCTAssertEqual(state.handle(.keyDown(code: 0)), .init(action: .cancel))
+        XCTAssertNil(state.pendingReleaseAt)
+        XCTAssertNil(state.handle(.releaseDeadline).action)
+    }
+
+    func testOwnPasteIsIgnoredDuringCaptureButFnVAndEscapeStillCancel() {
+        var state = FnKeyState()
+        _ = state.handle(press)
+        XCTAssertEqual(
+            state.handle(.keyDown(code: 9, sourceUserData: VeloceEventSourceUserData.textInserterPaste)),
+            .init()
+        )
+        XCTAssertEqual(state.handle(.keyDown(code: 9)), .init(action: .cancel))
+
+        _ = state.handle(release)
+        _ = state.handle(press)
+        XCTAssertEqual(state.handle(.keyDown(code: 53)), .init(action: .cancel, suppressEvent: true))
+    }
+
+    func testOwnPasteDoesNotCancelPendingDoubleTap() {
+        var state = FnKeyState(doubleTapEnabled: true)
+        _ = state.handle(press, at: 1)
+        _ = state.handle(release, at: 1.1)
+
+        XCTAssertEqual(
+            state.handle(.keyDown(code: 9, sourceUserData: VeloceEventSourceUserData.textInserterPaste), at: 1.2),
+            .init()
+        )
+        XCTAssertEqual(state.pendingReleaseAt ?? 0, 1.4, accuracy: 0.001)
+        XCTAssertEqual(state.handle(.releaseDeadline, at: 1.4).action, .release)
+    }
 }

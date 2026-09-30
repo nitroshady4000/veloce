@@ -62,6 +62,41 @@ struct SettingsView: View {
                             .disabled(model.isBusy || model.isRecording || model.selectedModel == .fast)
                         }
                         Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
+                        Toggle(isOn: $model.doubleFnEnabled) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Double Fn pour parler mains libres").font(.system(size: 13, weight: .medium))
+                                Text("Deux pressions rapides commencent la dictée. Fn termine, Échap annule. Maintenir Fn fonctionne toujours.")
+                                    .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch).tint(VeloceTheme.green).disabled(model.isBusy)
+                        Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
+                        Toggle(isOn: $model.cleanupEnabled) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Nettoyer légèrement mes dictées").font(.system(size: 13, weight: .medium))
+                                Text("Retire les hésitations et améliore la ponctuation sur ce Mac. Le texte brut reste accessible dans l’historique.")
+                                    .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                                if let reason = model.textProcessingUnavailableReason {
+                                    Text(reason).font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary)
+                                }
+                            }
+                        }
+                        .toggleStyle(.switch).tint(VeloceTheme.green).disabled(model.isBusy)
+                        Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Affichage pendant la dictée").font(.system(size: 13, weight: .medium))
+                                Text("Une pill près de votre texte ou un glyphe discret dans la barre de menus.")
+                                    .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                            }
+                            Spacer()
+                            Picker("Affichage pendant la dictée", selection: $model.presentationMode) {
+                                Text("Pill").tag(DictationPresentationMode.pill)
+                                Text("Barre de menus").tag(DictationPresentationMode.menuBar)
+                            }
+                            .labelsHidden().frame(width: 150)
+                        }
+                        Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Text("Votre vocabulaire")
@@ -94,6 +129,50 @@ struct SettingsView: View {
                             .background(VeloceTheme.paper, in: RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VeloceTheme.line.opacity(0.7), lineWidth: 1))
                         }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 11) {
+                SectionEyebrow(text: "Vos raccourcis vocaux")
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Dictez uniquement la phrase déclencheuse pour insérer son texte. Par exemple : « ma signature ».")
+                            .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                        ForEach($model.snippets) { $snippet in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    TextField("Phrase à prononcer", text: $snippet.phrase).textFieldStyle(.roundedBorder)
+                                    Button { model.removeSnippet(snippet.id) } label: { Image(systemName: "minus.circle") }
+                                        .buttonStyle(.plain).help("Supprimer ce raccourci")
+                                }
+                                TextEditor(text: $snippet.text).font(.system(size: 12)).scrollContentBackground(.hidden)
+                                    .padding(5).frame(height: 65).background(VeloceTheme.paper, in: RoundedRectangle(cornerRadius: 8))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VeloceTheme.line, lineWidth: 1))
+                                    .accessibilityLabel("Texte du raccourci \(snippet.phrase)")
+                            }
+                        }
+                        Button("Ajouter un raccourci", action: model.addSnippet).buttonStyle(VeloceButtonStyle(prominent: false))
+                    }
+                    .disabled(model.isBusy)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 11) {
+                SectionEyebrow(text: "Depuis le Finder")
+                SurfaceCard {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Fichier créé à côté de l’enregistrement").font(.system(size: 13, weight: .medium))
+                            Text("Clic droit sur un audio ou une vidéo → Services → Transcrire dans Véloce.")
+                                .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                        }
+                        Spacer()
+                        Picker("Format du fichier créé depuis le Finder", selection: $model.finderExportFormat) {
+                            Text("Texte (.txt)").tag("txt")
+                            Text("Markdown (.md)").tag("md")
+                        }
+                        .labelsHidden().frame(width: 150)
                     }
                 }
             }

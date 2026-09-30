@@ -23,34 +23,24 @@ Les petits composants de [FreeFlow Mac](https://github.com/rohanarun/freeflow-ma
 
 [Handy documente](https://github.com/cjpais/Handy#previous-clipboard-content-is-pasted-instead-of-the-transcription) un piège important : restaurer le presse-papiers après un délai fixe peut le faire trop tôt pour une application occupée. Une insertion doit préserver le presse-papiers, respecter le focus et garder un moyen de recopier un texte en cas d’échec.
 
-Une licence permissive autorise la reprise avec conservation des notices. Les modèles et dépendances ont leurs propres licences : la licence de l’application ne couvre pas automatiquement leurs poids. Aucun code de ces applications n’est copié dans cette première interface Véloce ; les liens servent à documenter la recherche et les choix.
+Une licence permissive autorise la reprise avec conservation des notices. Les modèles et dépendances ont leurs propres licences : la licence de l’application ne couvre pas automatiquement leurs poids. Le code de ces projets peut être repris lorsque sa licence le permet, en conservant les notices et en respectant les obligations de redistribution ; la GPL de MacParakeet impose notamment ses propres conditions. La branche actuelle documente ces références sans attribuer de code repris.
 
 ## Ce qu’on peut honnêtement appeler « meilleur »
 
-Il n’existe pas ici de benchmark français commun, effectué sur la machine cible, qui départage les applications. Les noms « Précision », « Équilibre » et « Vitesse » décrivent les profils visés, pas une supériorité mesurée. Il faut comparer la fidélité, les noms propres, les mélanges français/anglais, la latence après relâchement de Fn, le chargement initial et la mémoire sur les mêmes enregistrements avant de changer le modèle conseillé.
+Il n’existe pas ici de benchmark français commun, effectué sur la machine cible, qui départage les applications. Les profils « Précision », « Équilibre » et « Alternative » décrivent des usages visés, pas une supériorité mesurée. Il faut comparer la fidélité, les noms propres, les mélanges français/anglais, la latence après relâchement de Fn, le chargement initial et la mémoire sur les mêmes enregistrements avant de changer le modèle conseillé.
 
-## Options à choisir avec Cédric — 30 septembre 2026
+## Périmètre demandé pour Véloce — 30 septembre 2026
 
-Les réunions, les deux pistes, les interlocuteurs, les comptes rendus locaux et l’import d’un fichier audio sont demandés. Le tableau suivant est une proposition pour la suite, pas une autorisation d’implémenter toutes ces fonctions.
+Les choix produit sont maintenant définis. Le code correspondant est en cours d’intégration dans la branche ; ce tableau décrit le périmètre visé, pas des fonctionnalités validées ni des résultats mesurés.
 
-| Option | Référence observée | Avis pour Véloce |
+| Domaine | Périmètre | Limite à garder visible |
 | --- | --- | --- |
-| Glisser-déposer un fichier, importer plusieurs fichiers avec une file d’attente | MacParakeet | Utile après le sélecteur audio simple |
-| Extraire l’audio d’une vidéo | MacParakeet | Utile si les réunions arrivent en MP4/MOV |
-| Importer un podcast ou un lien YouTube | MacParakeet | Plus tard : dépendances et réseau supplémentaires |
-| Cliquer dans la transcription pour écouter le passage | MacParakeet | Prioritaire pour relire les réunions |
-| Corriger le texte, fusionner ou réattribuer les locuteurs | MacParakeet | Prioritaire ; Véloce permet déjà de renommer les voix |
-| Rechercher dans l’historique des réunions | MacParakeet, Wispr Notetaker | Prioritaire, recherche textuelle locale d’abord |
-| Voir la transcription pendant l’enregistrement | MacParakeet, Wispr Notetaker | Plus tard : consomme davantage pendant les appels |
-| Nettoyage facultatif des dictées, avec version brute conservée | Wispr, les deux FreeFlow, MacParakeet | Prioritaire ; ne doit pas changer le sens |
-| Double Fn pour commencer/arrêter sans maintenir la touche | Les deux FreeFlow ; mode mains libres chez Wispr et MacParakeet | Petit ajout utile |
-| Abréviations vocales et blocs de texte personnels | Wispr snippets, FreeFlow Zach macros, MacParakeet snippets | Simple et utile, entièrement local |
-| Réécrire ou traduire un texte sélectionné à la voix | Wispr Transforms, FreeFlow Zach, MacParakeet Transforms | À décider après le nettoyage |
-| Adapter le style à l’application | Wispr ; profils MacParakeet encore gated | Plus tard ; commencer par un choix manuel |
-| Modèles de compte rendu, actions et décisions | Wispr Notetaker, MacParakeet | Véloce a déjà un compte rendu local modifiable ; ajouter des variantes seulement si utiles |
-| Poser des questions sur une réunion, puis sur toute la bibliothèque | Wispr Notetaker ; chat par transcription MacParakeet | Plutôt Famulus ; Ask transversal MacParakeet reste gated |
-| Calendrier, rappel de réunion et démarrage automatique | MacParakeet | Plus tard, avec activation explicite |
-| Plus d’exports : TXT, VTT, PDF, DOCX | MacParakeet | TXT simple ; les autres selon l’usage réel. MD/SRT/JSON/WAV existent déjà |
+| Dictée | Qwen3-ASR 1.7B et 0.6B, Parakeet TDT v3 ; Équilibre (0.6B) par défaut ; un seul modèle ASR actif. Nettoyage Apple Intelligence facultatif avec texte brut conservé, snippets, double Fn/mains libres, transformation ou traduction du texte sélectionné. | Apple Intelligence nécessite macOS 26 et la disponibilité du français. Aucun benchmark de qualité n’est revendiqué. |
+| Présence | Pill sans logo V, détection vocale et lumière/couleur plus expressives ; option glyphe animé dans la barre de menus. | Le rendu et l’écoute micro restent à valider en usage réel. |
+| Réunions | Relecture synchronisée par segment, édition du texte, renommage/fusion/réattribution des voix, recherche textuelle locale, glisser-déposer et file d’import audio/vidéo, exports TXT/VTT. Transcription en direct facultative, mise à jour environ toutes les 30 secondes, désactivable. | La diarisation regroupe des voix acoustiques anonymes et peut se tromper ; la qualité française n’est pas mesurée ici. |
+| Finder | Service macOS sur clic droit : transcrire audio/vidéo, créer un `.txt` ou `.md` de même nom à côté du média selon le format choisi, et ajouter la réunion à l’historique. | Un sidecar existant n’est jamais remplacé. Le fonctionnement est à valider après packaging et installation du service. |
+| Calendrier et questions | Connexion calendrier EventKit et rappels opt-in. Questions sur les réunions traitées localement avec extraits de preuve. | Questions et fonctions Apple Intelligence exigent macOS 26 et la prise en charge du français. |
+| Confidentialité | Transcription et traitement local après téléchargement initial ; aucune copie vers un service cloud. | Modèles et dépendances sont téléchargés au premier usage ; les autorisations macOS restent nécessaires. |
 
 **Sources primaires vérifiées :**
 

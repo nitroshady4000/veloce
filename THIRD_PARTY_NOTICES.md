@@ -1,6 +1,6 @@
 # Third-party notices
 
-Véloce's own code is licensed under MIT. Dependencies and model weights retain their respective licenses. At the owner's request, the interface follows Famulus's **Feu follet** design (`app/poc/Pill.swift`, `Magic.swift`, `Skin.swift`, `SkinFeuFollet.swift`): warm dark glass, its palette and proportions, the voice envelope and animation timing. The V logo and its compact Metal renderer are original Véloce implementations; the flame mascot and its artwork are not included. Famulus itself is not a runtime dependency and is not modified by this project.
+Véloce's own code is licensed under MIT. Dependencies and model weights retain their respective licenses. At the owner's request, the interface follows Famulus's **Feu follet** design (`app/poc/Pill.swift`, `Magic.swift`, `Skin.swift`, `SkinFeuFollet.swift`): warm dark glass, its palette and proportions, the voice envelope and animation timing. The app icon's V and the compact Metal renderer are original Véloce implementations. The dictation pill has no logo or mascot; the flame mascot and its artwork are not included. Famulus itself is not a runtime dependency and is not modified by this project.
 
 ## Speech runtimes and weights
 

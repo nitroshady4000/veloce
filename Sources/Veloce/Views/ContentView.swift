@@ -60,9 +60,16 @@ struct ContentView: View {
         .frame(minWidth: 900, minHeight: 650)
         .tint(VeloceTheme.accent)
         .preferredColorScheme(.dark)
-        .onAppear { model.refreshPermissions() }
+        .onAppear {
+            model.refreshPermissions()
+            if model.meetings.navigationRequested { page = .meetings; model.meetings.navigationRequested = false }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             model.refreshPermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .veloceShowMeetings)) { _ in
+            page = .meetings
+            model.meetings.navigationRequested = false
         }
         .sheet(item: $model.permissionGuide) { permission in
             PermissionGuideView(initialPermission: permission)
@@ -130,7 +137,7 @@ struct ContentView: View {
                     .foregroundStyle(VeloceTheme.secondary)
                 Rectangle().fill(VeloceTheme.line).frame(height: 1).padding(.vertical, 7)
                 HStack {
-                    Text("Véloce · 0.1")
+                    Text("Véloce · 0.2")
                     Spacer()
                     Text("Open source")
                 }

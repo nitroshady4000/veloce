@@ -9,6 +9,12 @@ enum VeloceError: LocalizedError {
 /// A single persistent worker: model weights stay warm between dictations.
 @MainActor
 final class EngineClient {
+    /// Injectable transport for offline workflow verification. Production always
+    /// uses the managed process; diagnostics never load a second speech model.
+    private let requestOverride: ((String, [String: Any]) async throws -> EngineReply.Result)?
+    init(requestOverride: ((String, [String: Any]) async throws -> EngineReply.Result)? = nil) {
+        self.requestOverride = requestOverride
+    }
     private var process: Process?
     private var installer: Process?
     private var input: FileHandle?
@@ -30,10 +36,11 @@ final class EngineClient {
         }
         return (Bundle.main.resourceURL ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).appendingPathComponent("Engine")
     }()
-    var installed: Bool { FileManager.default.isExecutableFile(atPath: python.path) }
+    var installed: Bool { requestOverride != nil || FileManager.default.isExecutableFile(atPath: python.path) }
     private var python: URL { directory.appendingPathComponent(".venv/bin/python") }
 
     func install(includeParakeet: Bool, includeMeetings: Bool = false) async throws {
+        if requestOverride != nil { try Task.checkCancellation(); return }
         guard installer == nil else { throw VeloceError.message("Une installation du moteur est déjà en cours.") }
         try Task.checkCancellation()
         let script = directory.appendingPathComponent("bootstrap.sh")
@@ -76,6 +83,7 @@ final class EngineClient {
     }
 
     func request(_ method: String, params: [String: Any] = [:], timeout: Double = 180) async throws -> EngineReply.Result {
+        if let requestOverride { return try await requestOverride(method, params) }
         try start()
         let id = UUID().uuidString
         var data = try JSONSerialization.data(withJSONObject: ["id": id, "method": method, "params": params])

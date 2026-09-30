@@ -33,6 +33,39 @@ final class MeetingTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(MeetingRecord.self, from: JSONEncoder().encode(record)).segments, record.segments)
     }
 
+    func testSearchFindsCorrectedNamesAndNotesWithoutAccents() {
+        var record = MeetingRecord(title: "Réunion équipe")
+        record.notes = "Décision : livrer vendredi"
+        record.segments = [MeetingSegment(id: "1", start: 3, end: 5, speaker: "Voix 1", source: "system", text: "Prévoir la réunion de suivi.")]
+        record.speakerNames["Voix 1"] = "Cédric"
+        XCTAssertTrue(record.matches("CEDRIC REUNION"))
+        XCTAssertTrue(record.matches("decision vendredi"))
+        XCTAssertFalse(record.matches("vendredi inconnu"))
+        XCTAssertTrue(record.matches("  "))
+    }
+
+    func testEditingAndMergingKeepOriginalTimelinesAndTracks() {
+        var record = MeetingRecord(title: "Planning")
+        record.segments = [
+            MeetingSegment(id: "1", start: 3, end: 5, speaker: "Voix 1", source: "system", text: "Ancien texte"),
+            MeetingSegment(id: "2", start: 4, end: 6, speaker: "Vous", source: "microphone", text: "Oui"),
+            MeetingSegment(id: "3", start: 8, end: 9, speaker: "Voix 2", source: "system", text: "D’accord")
+        ]
+        record.speakerNames = ["Voix 1": "Erreur", "Voix 2": "Camille"]
+        record.editSegment("1", text: " Nouveau texte ", speaker: "Voix 2")
+        XCTAssertEqual(record.segments[0].text, "Nouveau texte")
+        XCTAssertEqual(record.segments[0].start, 3)
+        XCTAssertEqual(record.segments[0].source, "system")
+        record.mergeSpeaker("Vous", into: "Voix 2")
+        XCTAssertEqual(record.segments[1].speaker, "Voix 2")
+        XCTAssertEqual(record.segments[1].source, "microphone")
+        XCTAssertEqual(record.segments[1].end, 6)
+        XCTAssertEqual(record.speakers, ["Voix 2"])
+        XCTAssertTrue(record.transcript.contains("Camille"))
+        XCTAssertTrue(record.vtt.hasPrefix("WEBVTT\n\n"))
+        XCTAssertTrue(record.vtt.contains("00:00:03.000 --> 00:00:05.000"))
+    }
+
     func testMeetingEngineReplyKeepsProgressAndStructuredSegments() throws {
         let progress = try JSONDecoder().decode(EngineReply.self, from: Data(#"{"event":"meeting_progress","progress":0.5,"detail":"Piste système"}"#.utf8))
         XCTAssertEqual(progress.progress, 0.5)

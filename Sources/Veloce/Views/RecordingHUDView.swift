@@ -17,25 +17,24 @@ struct RecordingHUDView: View {
     }
 
     private var cancelAction: (() -> Void)? {
-        guard model.isRecording || model.phase == .transcribing else { return nil }
+        guard model.isRecording || (model.phase == .transcribing && !model.isDictationProcessing) else { return nil }
         return { model.cancel() }
     }
 
-    private var hudPhase: PillPhase {
-        switch model.phase {
-        case .recording: .listening
-        case .transcribing, .preparing: .thinking
-        case .ready: .success
-        case .error: .failure
-        case .idle: .idle
-        }
-    }
+    private var hudPhase: PillPhase { PillPhase(appPhase: model.phase) }
 
     private var hudSubtitle: String {
+        if model.isRecording, model.pendingDictationCount > 0 {
+            let finish = model.isHandsFree ? "Fn pour terminer" : "Relâchez fn"
+            return "\(finish) · \(model.pendingDictationCount) en cours"
+        }
+        if model.isDictationProcessing {
+            return model.canStartDictation ? "Fn pour dicter la suite" : "\(model.pendingDictationCount) dictées dans la file"
+        }
         switch model.phase {
-        case .recording: "Relâchez fn pour écrire"
-        case .ready: model.transcriptInserted ? "À la prochaine idée" : "Retrouvez votre texte dans Véloce"
-        default: "Tout reste sur votre Mac"
+        case .recording: return model.isHandsFree ? "Appuyez sur fn pour terminer" : "Relâchez fn pour écrire"
+        case .ready: return model.transcriptInserted ? "À la prochaine idée" : "Retrouvez votre texte dans Véloce"
+        default: return "Tout reste sur votre Mac"
         }
     }
 

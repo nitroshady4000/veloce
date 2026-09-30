@@ -3,41 +3,41 @@ import SwiftUI
 /// Presentation only: no engine or microphone is created by this component.
 enum PillPhase: Int, CaseIterable {
     case idle, listening, thinking, success, failure
+
+    init(appPhase: DictationPhase) {
+        switch appPhase {
+        case .recording: self = .listening
+        case .transcribing, .preparing: self = .thinking
+        case .ready: self = .success
+        case .error: self = .failure
+        case .idle: self = .idle
+        }
+    }
+}
+
+/// The microphone meter is intentionally quiet at its lower end. Amplify only
+/// its presentation so normal speech lights up the pill without changing audio.
+enum PillVoiceResponse {
+    static func amplitude(_ level: Double) -> Double {
+        let normalized = min(1, max(0, (level - 0.08) / 0.92))
+        return min(1, sqrt(normalized) * 1.4)
+    }
 }
 
 enum PillLayout {
     static let width: CGFloat = 360
     static let height: CGFloat = 56
     static let margin: CGFloat = 28
-    static let bulbOverhang: CGFloat = 5
+    static let bulbOverhang: CGFloat = 0
     static let bottom: CGFloat = 44
     static let canvas = CGSize(width: width + margin * 2, height: height + margin * 2)
 }
 
-/// Famulus's bulb and capsule proportions, expressed as a small native path.
+/// A simple capsule: the voice lives in its light, with no logo or mascot.
 struct PillOutline: Shape {
     func path(in rect: CGRect) -> Path {
-        let scale = rect.height / PillLayout.height
-        let cy = rect.midY
-        let bulbX = rect.minX + 30.24 * scale
-        let bulbRadius = rect.height / 2 + 5 * scale
-        let right = rect.maxX
-        let radius = rect.height / 2
         var path = Path()
-        path.move(to: CGPoint(x: bulbX, y: cy - bulbRadius))
-        path.addCurve(to: CGPoint(x: bulbX + 44 * scale, y: rect.minY),
-                      control1: CGPoint(x: bulbX + 20 * scale, y: cy - bulbRadius),
-                      control2: CGPoint(x: bulbX + 23 * scale, y: rect.minY))
-        path.addLine(to: CGPoint(x: right - radius, y: rect.minY))
-        path.addArc(center: CGPoint(x: right - radius, y: cy), radius: radius,
-                    startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
-        path.addLine(to: CGPoint(x: bulbX + 44 * scale, y: rect.maxY))
-        path.addCurve(to: CGPoint(x: bulbX, y: cy + bulbRadius),
-                      control1: CGPoint(x: bulbX + 23 * scale, y: rect.maxY),
-                      control2: CGPoint(x: bulbX + 20 * scale, y: cy + bulbRadius))
-        path.addArc(center: CGPoint(x: bulbX, y: cy), radius: bulbRadius,
-                    startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
-        path.closeSubpath()
+        path.addRoundedRect(in: rect, cornerSize: CGSize(width: rect.height / 2, height: rect.height / 2))
         return path
     }
 }
@@ -63,8 +63,6 @@ struct VelocePill: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             HStack(spacing: 11) {
-                // The V is drawn in the same Metal layer as the light on the rim.
-                Color.clear.frame(width: 40.48, height: 44)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -101,7 +99,7 @@ struct VelocePill: View {
                 }
             }
             .foregroundStyle(.white.opacity(0.66))
-            .padding(.leading, 10).padding(.trailing, 20)
+            .padding(.leading, 22).padding(.trailing, 20)
             .frame(width: PillLayout.width, height: PillLayout.height)
         }
         .frame(width: PillLayout.canvas.width, height: PillLayout.canvas.height)

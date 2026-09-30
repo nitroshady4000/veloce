@@ -3,14 +3,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import VeloceCore
 
-enum MeetingPhase { case idle, starting, recording, stopping, importing, processing, preparing, summarizing }
+enum MeetingPhase { case idle, starting, recording, stopping, importing, processing, preparing, summarizing, asking }
 
 @MainActor
 final class MeetingModel: ObservableObject {
     @Published private(set) var records: [MeetingRecord]
-    @Published var selectedID: UUID?
+    @Published var selectedID: UUID? { didSet { if oldValue != selectedID { player.stop(); questionAnswer = "" } } }
     @Published private(set) var phase: MeetingPhase = .idle {
-        didSet { onBusyChange?(isBusy) }
+        didSet {
+            onBusyChange?(isBusy)
+            if phase == .idle { Task { [weak self] in self?.startNextQueuedImport() } }
+        }
     }
     @Published private(set) var status = "Deux pistes, une conversation."
     @Published private(set) var progress = 0.0
@@ -22,6 +25,14 @@ final class MeetingModel: ObservableObject {
     @Published var draftTitle = ""
     @Published var transcribeAfterRecording = true
     @Published var transcribeAfterImport = true
+    @Published var liveTranscription = UserDefaults.standard.bool(forKey: "meetingLiveTranscription") {
+        didSet { UserDefaults.standard.set(liveTranscription, forKey: "meetingLiveTranscription") }
+    }
+    @Published private(set) var liveStatus = ""
+    @Published var searchQuery = ""
+    @Published private(set) var queuedImportCount = 0
+    @Published private(set) var importFailures: [String] = []
+    @Published private(set) var questionAnswer = ""
     @Published private(set) var error: String? {
         didSet { showsCaptureSettings = false }
     }
@@ -29,10 +40,24 @@ final class MeetingModel: ObservableObject {
     var canBegin: (() -> Bool)?
     var onBusyChange: ((Bool) -> Void)?
     var onModelLoaded: ((SpeechModel) -> Void)?
+    var onSidecarReady: ((MeetingRecord, URL, String) throws -> Void)?
+    var onShowMeetings: (() -> Void)?
+    var navigationRequested = false
+
+    let player = MeetingPlayer()
+    lazy var calendar: MeetingCalendarService = {
+        let service = MeetingCalendarService(restorePreferences: !isPreview)
+        service.onReminder = { [weak self] title in
+            self?.draftTitle = title; self?.onShowMeetings?()
+        }
+        return service
+    }()
 
     var isBusy: Bool { phase != .idle }
     var selected: MeetingRecord? { records.first { $0.id == selectedID } }
+    var filteredRecords: [MeetingRecord] { records.filter { $0.matches(searchQuery) } }
     var notesUnavailableReason: String? { MeetingNotesGenerator.unavailableReason }
+    var questionsUnavailableReason: String? { MeetingQuestionService.unavailableReason }
     private let engine: EngineClient
     private let recorder = MeetingRecorder()
     private let store: MeetingStore
@@ -43,9 +68,25 @@ final class MeetingModel: ObservableObject {
     private var generation = UUID()
     private var shuttingDown = false
     private var transcriptionSettings: (SpeechModel, String, String)?
+    private var liveTask: Task<Void, Never>?
+    private var liveCursor = 0.0
+    private var liveFailed = false
+    private var importQueue: [ImportJob] = []
+    private var queueTimer: Timer?
+    private var activeImport = false
+    private let isPreview: Bool
+
+    private struct ImportJob {
+        let url: URL
+        let model: SpeechModel
+        let language: String
+        let vocabulary: String
+        let transcribe: Bool
+        let sidecarFormat: String?
+    }
 
     init(engine: EngineClient, store: MeetingStore = MeetingStore(), previewRecords: [MeetingRecord]? = nil) {
-        self.engine = engine; self.store = store
+        self.engine = engine; self.store = store; isPreview = previewRecords != nil
         records = previewRecords ?? store.load(); selectedID = records.first?.id
         recorder.onLevels = { [weak self] mic, system in
             self?.microphoneLevel = mic; self?.systemLevel = system
@@ -56,7 +97,7 @@ final class MeetingModel: ObservableObject {
             self.stopRecording(transcribe: false)
         }
         engine.onMeetingProgress = { [weak self] value, detail in
-            guard let self, self.isBusy else { return }
+            guard let self, self.phase == .processing else { return }
             self.progress = value; self.status = detail
         }
     }
@@ -76,7 +117,8 @@ final class MeetingModel: ObservableObject {
         if #unavailable(macOS 15.0) {
             error = "La capture de réunion nécessite macOS 15 ou plus récent."; return
         }
-        error = nil; elapsed = 0; progress = 0
+        error = nil; elapsed = 0; progress = 0; player.stop()
+        liveCursor = 0; liveFailed = false; liveStatus = ""
         let title = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let record = MeetingRecord(title: title.isEmpty ? "Réunion du \(Date().formatted(date: .abbreviated, time: .shortened))" : title)
         do { try store.save(record) }
@@ -87,6 +129,14 @@ final class MeetingModel: ObservableObject {
         phase = .starting; status = "Autorisation et préparation des deux pistes…"
         operation = Task { [self] in
             do {
+                if liveTranscription {
+                    status = "Préparation du modèle léger pour le direct…"
+                    if !engine.installed { try await engine.install(includeParakeet: false) }
+                    _ = try await engine.request("load", params: ["model": SpeechModel.balanced.rawValue], timeout: 1800)
+                    try Task.checkCancellation()
+                    guard generation == token else { return }
+                    onModelLoaded?(.balanced)
+                }
                 try await recorder.start(directory: store.directory(for: record.id))
                 // The cancellation owner already stopped this generation. Do not
                 // let a delayed permission response cancel a later recording.
@@ -99,7 +149,10 @@ final class MeetingModel: ObservableObject {
                 guard generation == token else { return }
                 update(record.id) { $0.status = .interrupted }
                 self.error = error.localizedDescription; status = "L’enregistrement n’a pas démarré."
-                showsCaptureSettings = true
+                if let captureError = error as? MeetingRecorder.CaptureError {
+                    if case .systemPermission = captureError { showsCaptureSettings = true }
+                    if case .noDisplay = captureError { showsCaptureSettings = true }
+                }
                 phase = .idle; activeID = nil
             }
         }
@@ -108,25 +161,57 @@ final class MeetingModel: ObservableObject {
     func chooseAudioFile(model: SpeechModel, language: String, vocabulary: String) {
         guard !isBusy, canBegin?() != false else { return }
         let panel = NSOpenPanel()
-        panel.title = "Importer un fichier audio"
+        panel.title = "Importer des audios ou vidéos"
         panel.prompt = "Importer"
-        panel.allowedContentTypes = [.audio]
-        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.audio, .movie]
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK else { return }
         // Fn may have started while the panel was open.
         guard !isBusy, canBegin?() != false else { return }
-        importAudioFile(url, model: model, language: language, vocabulary: vocabulary)
+        enqueueImports(panel.urls, model: model, language: language, vocabulary: vocabulary)
     }
 
-    private func importAudioFile(_ url: URL, model: SpeechModel, language: String, vocabulary: String) {
+    func enqueueImports(_ urls: [URL], model: SpeechModel, language: String, vocabulary: String, sidecarFormat: String? = nil) {
+        guard !shuttingDown else { return }
+        if queuedImportCount == 0 { importFailures = [] }
+        var seen = Set<URL>()
+        for url in urls where url.isFileURL && seen.insert(url.standardizedFileURL).inserted {
+            importQueue.append(ImportJob(url: url, model: model, language: language, vocabulary: vocabulary,
+                transcribe: sidecarFormat != nil || transcribeAfterImport, sidecarFormat: sidecarFormat))
+        }
+        updateQueueCount()
+        if !importQueue.isEmpty, queueTimer == nil {
+            queueTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.startNextQueuedImport() }
+            }
+        }
+        startNextQueuedImport()
+    }
+
+    func cancelQueuedImports() { importQueue = []; updateQueueCount() }
+
+    private func updateQueueCount() {
+        queuedImportCount = importQueue.count + (activeImport ? 1 : 0)
+        if queuedImportCount == 0 { queueTimer?.invalidate(); queueTimer = nil }
+    }
+
+    private func startNextQueuedImport() {
+        guard !isBusy, canBegin?() != false, !shuttingDown, !importQueue.isEmpty else { return }
+        let job = importQueue.removeFirst()
+        activeImport = true; updateQueueCount()
+        importAudioFile(job)
+    }
+
+    private func importAudioFile(_ job: ImportJob) {
+        let url = job.url
         error = nil; progress = 0; phase = .importing
+        player.stop()
         status = "Import de \(url.lastPathComponent)…"
         var record = MeetingRecord(title: url.deletingPathExtension().lastPathComponent)
         record.originalFilename = url.lastPathComponent
         let folder = store.directory(for: record.id)
         let token = UUID(); generation = token
-        let shouldTranscribe = transcribeAfterImport
         operation = Task { [self] in
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -147,17 +232,28 @@ final class MeetingModel: ObservableObject {
                 record.status = .recorded
                 try store.save(record)
                 records.insert(record, at: 0); selectedID = record.id
-                progress = 1; phase = .idle; status = "Le fichier audio est prêt."
-                if shouldTranscribe, !shuttingDown {
-                    transcribeMeeting(record.id, model: model, language: language, vocabulary: vocabulary)
+                if job.transcribe, !shuttingDown {
+                    phase = .processing
+                    try await transcribeRecord(record, model: job.model, language: job.language, vocabulary: job.vocabulary, token: token)
+                    if let format = job.sidecarFormat,
+                       let completed = records.first(where: { $0.id == record.id }) {
+                        guard let writer = onSidecarReady else { throw VeloceError.message("La transcription est conservée dans l’historique, mais l’export à côté du fichier est indisponible.") }
+                        try writer(completed, url, format)
+                    }
                 }
+                guard generation == token, !Task.isCancelled else { return }
+                progress = 1; status = job.sidecarFormat != nil ? "La transcription et son fichier sont prêts." : job.transcribe ? "La transcription est prête." : "Le fichier audio est prêt."
             } catch {
                 // Only this operation's new directory is disposable. The source
                 // and all existing meetings are untouched, including on cancel.
-                if createdFolder { try? FileManager.default.removeItem(at: folder) }
+                if createdFolder, !records.contains(where: { $0.id == record.id }) { try? FileManager.default.removeItem(at: folder) }
                 guard generation == token, !Task.isCancelled else { return }
                 self.error = error.localizedDescription
-                phase = .idle; status = "Le fichier n’a pas pu être importé."
+                importFailures.append("\(url.lastPathComponent) : \(error.localizedDescription)")
+                status = records.contains(where: { $0.id == record.id }) ? "La réunion est conservée ; le traitement n’a pas abouti." : "Le fichier n’a pas pu être importé."
+            }
+            if generation == token {
+                activeImport = false; updateQueueCount(); phase = .idle
             }
         }
     }
@@ -166,6 +262,9 @@ final class MeetingModel: ObservableObject {
         guard phase == .recording else { return }
         elapsed = Date().timeIntervalSince(recordingDate ?? Date())
         if let activeID, Int(elapsed) % 5 == 0 { update(activeID) { $0.duration = elapsed } }
+        if liveTranscription, !liveFailed, liveTask == nil, elapsed - liveCursor >= 15, let activeID {
+            transcribeLive(id: activeID, through: min(elapsed, liveCursor + 30))
+        }
         if elapsed >= 4 * 3600 { stopRecording(transcribe: transcribeAfterRecording) }
     }
 
@@ -176,6 +275,7 @@ final class MeetingModel: ObservableObject {
         operation = Task {
             do {
                 let capture = try await recorder.stop()
+                await liveTask?.value; liveTask = nil
                 update(id) { $0.duration = capture.duration; $0.status = .recorded }
                 elapsed = capture.duration; phase = .idle; activeID = nil
                 status = "Les deux pistes sont sauvegardées."
@@ -183,6 +283,7 @@ final class MeetingModel: ObservableObject {
                     transcribeMeeting(id, model: settings.0, language: settings.1, vocabulary: settings.2)
                 }
             } catch {
+                liveTask?.cancel(); engine.stop(); await liveTask?.value; liveTask = nil
                 update(id) { $0.status = .interrupted }
                 self.error = error.localizedDescription; phase = .idle; activeID = nil
                 status = "Enregistrement interrompu. Les fichiers disponibles sont conservés."
@@ -214,36 +315,104 @@ final class MeetingModel: ObservableObject {
         error = nil; progress = 0; phase = .processing; selectedID = id
         status = "Chargement du modèle de transcription…"
         let token = UUID(); generation = token
-        let useDiarization = diarize && diarizationReady
+        player.stop()
         operation = Task {
             do {
-                if !engine.installed || model == .fast {
-                    try await engine.install(includeParakeet: model == .fast, includeMeetings: diarizationReady)
-                }
+                try await transcribeRecord(record, model: model, language: language, vocabulary: vocabulary, token: token)
+                guard generation == token, !Task.isCancelled else { return }
+                progress = 1; phase = .idle
+                status = selected?.segments.isEmpty == true ? "Aucune parole détectée. Les pistes restent disponibles." : "La transcription est prête."
+            } catch { finishError(error, token: token) }
+        }
+    }
+
+    private func transcribeRecord(_ record: MeetingRecord, model: SpeechModel, language: String,
+                                   vocabulary: String, token: UUID) async throws {
+        if !engine.installed || model == .fast {
+            try await engine.install(includeParakeet: model == .fast, includeMeetings: diarizationReady)
+        }
+        try Task.checkCancellation()
+        guard generation == token else { throw CancellationError() }
+        _ = try await engine.request("load", params: ["model": model.rawValue], timeout: 1800)
+        try Task.checkCancellation()
+        guard generation == token else { throw CancellationError() }
+        onModelLoaded?(model)
+        let folder = store.directory(for: record.id)
+        var params: [String: Any] = ["model": model.rawValue, "context": vocabulary, "diarize": diarize && diarizationReady]
+        if record.isImported {
+            params["audio_path"] = folder.appendingPathComponent("imported.wav").path
+        } else {
+            params["microphone_path"] = folder.appendingPathComponent("microphone.wav").path
+            params["system_path"] = folder.appendingPathComponent("system.wav").path
+        }
+        if language != "Auto" { params["language"] = language }
+        let result = try await engine.request("transcribe_meeting", params: params, timeout: 24 * 3600)
+        try Task.checkCancellation()
+        guard generation == token else { throw CancellationError() }
+        guard let segments = result.segments else { throw VeloceError.message("Le moteur n’a pas renvoyé les passages de la réunion.") }
+        try commit(record.id) {
+            $0.segments = segments; $0.model = model; $0.status = .transcribed
+            $0.duration = result.duration ?? $0.duration
+            $0.diarization = result.diarization ?? "sources"
+        }
+    }
+
+    private func transcribeLive(id: UUID, through end: Double) {
+        guard let settings = transcriptionSettings else { return }
+        let start = liveCursor
+        let token = generation
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("veloce-live-\(UUID().uuidString)", isDirectory: true)
+        liveStatus = "Transcription du direct…"
+        liveTask = Task { [self] in
+            defer {
+                try? FileManager.default.removeItem(at: folder)
+                liveTask = nil
+            }
+            do {
+                let snapshot = try await recorder.snapshot(directory: folder, from: start, through: end)
+                var params: [String: Any] = ["model": SpeechModel.balanced.rawValue, "context": settings.2, "diarize": false,
+                    "microphone_path": snapshot.microphoneURL.path, "system_path": snapshot.systemURL.path]
+                if settings.1 != "Auto" { params["language"] = settings.1 }
+                let result = try await engine.request("transcribe_meeting", params: params, timeout: 600)
                 try Task.checkCancellation()
                 guard generation == token else { return }
-                _ = try await engine.request("load", params: ["model": model.rawValue], timeout: 1800)
-                guard generation == token, !Task.isCancelled else { return }
-                onModelLoaded?(model)
-                let folder = store.directory(for: id)
-                var params: [String: Any] = ["model": model.rawValue, "context": vocabulary, "diarize": useDiarization]
-                if record.isImported {
-                    params["audio_path"] = folder.appendingPathComponent("imported.wav").path
-                } else {
-                    params["microphone_path"] = folder.appendingPathComponent("microphone.wav").path
-                    params["system_path"] = folder.appendingPathComponent("system.wav").path
+                let segments = (result.segments ?? []).map { segment -> MeetingSegment in
+                    var segment = segment
+                    segment.id = "live-\(Int(start * 1000))-\(segment.id)"
+                    segment.start += start; segment.end += start
+                    return segment
                 }
-                if language != "Auto" { params["language"] = language }
-                let result = try await engine.request("transcribe_meeting", params: params, timeout: 24 * 3600)
-                guard generation == token, !Task.isCancelled else { return }
-                guard let segments = result.segments else { throw VeloceError.message("Le moteur n’a pas renvoyé les passages de la réunion.") }
                 update(id) {
-                    $0.segments = segments; $0.model = model; $0.status = .transcribed
-                    $0.duration = result.duration ?? $0.duration
-                    $0.diarization = result.diarization ?? "sources"
+                    $0.segments.append(contentsOf: segments)
+                    $0.segments.sort { $0.start < $1.start }
+                    $0.model = .balanced; $0.diarization = "live-tracks"
                 }
-                progress = 1; phase = .idle
-                status = segments.isEmpty ? "Aucune parole détectée. Les pistes restent disponibles." : "La transcription est prête."
+                liveCursor = end
+                liveStatus = "Direct à jour jusqu’à \(MeetingRecord.timestamp(end)) · version provisoire"
+            } catch {
+                guard generation == token, !Task.isCancelled else { return }
+                liveFailed = true
+                liveStatus = "Le direct est interrompu. L’audio continue de s’enregistrer ; il pourra être transcrit après l’arrêt."
+            }
+        }
+    }
+
+    func askQuestion(_ question: String, allMeetings: Bool) {
+        let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scope = allMeetings ? records.filter { !$0.segments.isEmpty } : selected.map { [$0] } ?? []
+        guard !question.isEmpty, !scope.isEmpty, !isBusy, canBegin?() != false else { return }
+        error = nil; questionAnswer = ""; phase = .asking; progress = 0
+        status = "Recherche dans vos réunions sur ce Mac…"
+        let token = UUID(); generation = token
+        operation = Task { [self] in
+            do {
+                let answer = try await MeetingQuestionService.answer(question: question, records: scope) { [weak self] value in
+                    guard let self, self.generation == token else { return }
+                    self.progress = value
+                }
+                guard generation == token, !Task.isCancelled else { return }
+                questionAnswer = answer; progress = 1; phase = .idle
+                status = "La réponse est prête."
             } catch { finishError(error, token: token) }
         }
     }
@@ -256,22 +425,24 @@ final class MeetingModel: ObservableObject {
             do {
                 let notes = try await MeetingNotesGenerator.generate(transcript: record.transcript) { [weak self] in self?.progress = $0 }
                 guard generation == token, !Task.isCancelled else { return }
-                update(record.id) { $0.notes = notes }
+                try commit(record.id) { $0.notes = notes }
                 phase = .idle; progress = 1; status = "Le compte rendu est prêt à relire."
             } catch { finishError(error, token: token) }
         }
     }
 
     func cancelProcessing() {
-        guard [.processing, .preparing, .summarizing, .importing].contains(phase) else { return }
+        guard [.processing, .preparing, .summarizing, .importing, .asking].contains(phase) else { return }
         let wasImporting = phase == .importing
         let token = UUID(); generation = token
         let pending = operation; pending?.cancel()
-        if phase != .summarizing && !wasImporting { engine.stop() }
+        importQueue = []
+        if ![.summarizing, .asking].contains(phase) && !wasImporting { engine.stop() }
         phase = .stopping; status = "Arrêt du traitement…"
         operation = Task {
             await pending?.value
             guard generation == token else { return }
+            activeImport = false; updateQueueCount()
             phase = .idle
             status = wasImporting ? "Import annulé. Le fichier d’origine est intact." : "Traitement arrêté. L’enregistrement reste disponible."
         }
@@ -279,7 +450,7 @@ final class MeetingModel: ObservableObject {
 
     func cancelStarting() {
         guard phase == .starting, let id = activeID else { return }
-        generation = UUID(); operation?.cancel(); phase = .stopping
+        generation = UUID(); operation?.cancel(); engine.stop(); phase = .stopping
         operation = Task {
             await recorder.cancel()
             update(id) { $0.status = .interrupted }
@@ -289,8 +460,30 @@ final class MeetingModel: ObservableObject {
 
     func setNotes(_ notes: String) { if let selectedID { update(selectedID) { $0.notes = notes } } }
     func renameSpeaker(_ speaker: String, to name: String) {
-        if let selectedID { update(selectedID) { $0.speakerNames[speaker] = name } }
+        if !isBusy, let selectedID { update(selectedID) { $0.speakerNames[speaker] = name } }
     }
+    func editSegment(_ id: String, text: String, speaker: String) {
+        if !isBusy, let selectedID { update(selectedID) { $0.editSegment(id, text: text, speaker: speaker) } }
+    }
+    func mergeSpeaker(_ source: String, into target: String) {
+        if !isBusy, let selectedID { update(selectedID) { $0.mergeSpeaker(source, into: target) } }
+    }
+    func audioURLs(for record: MeetingRecord) -> [(String, URL)] {
+        let folder = store.directory(for: record.id)
+        return record.isImported ? [("imported", folder.appendingPathComponent("imported.wav"))]
+            : [("microphone", folder.appendingPathComponent("microphone.wav")), ("system", folder.appendingPathComponent("system.wav"))]
+    }
+    func playSegment(_ segment: MeetingSegment) {
+        guard !isBusy, let selected else { return }
+        do { try player.load(id: selected.id, tracks: audioURLs(for: selected)); player.play(at: segment.start) }
+        catch { self.error = error.localizedDescription }
+    }
+    func togglePlayback() {
+        guard !isBusy, let selected else { return }
+        do { try player.load(id: selected.id, tracks: audioURLs(for: selected)); player.toggle() }
+        catch { self.error = error.localizedDescription }
+    }
+    func replaceNotes(_ notes: String, for id: UUID) { update(id) { $0.notes = notes } }
     func renameMeeting(_ title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if let selectedID, !title.isEmpty { update(selectedID) { $0.title = title } }
@@ -306,7 +499,7 @@ final class MeetingModel: ObservableObject {
     }
     func deleteSelected() {
         guard !isBusy, let id = selectedID else { return }
-        do { try store.remove(id); records.removeAll { $0.id == id }; selectedID = records.first?.id }
+        do { player.stop(); try store.remove(id); records.removeAll { $0.id == id }; selectedID = records.first?.id }
         catch { self.error = error.localizedDescription }
     }
 
@@ -320,7 +513,9 @@ final class MeetingModel: ObservableObject {
             let data: Data
             switch format {
             case "md": data = Data(record.markdown.utf8)
+            case "txt": data = Data(record.transcript.utf8)
             case "srt": data = Data(record.srt.utf8)
+            case "vtt": data = Data(record.vtt.utf8)
             case "json": let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; data = try encoder.encode(record)
             default: return
             }
@@ -355,6 +550,8 @@ final class MeetingModel: ObservableObject {
 
     func finishForTermination() async {
         shuttingDown = true
+        importQueue = []; queueTimer?.invalidate(); queueTimer = nil; player.stop()
+        if liveTask != nil { liveTask?.cancel(); engine.stop() }
         timer?.invalidate(); timer = nil
         let currentPhase = phase
         if currentPhase == .starting {
@@ -370,8 +567,9 @@ final class MeetingModel: ObservableObject {
             } else { update(id) { $0.status = .interrupted } }
         }
         let pending = operation
-        generation = UUID(); pending?.cancel(); engine.stop()
-        if currentPhase != .starting && currentPhase != .summarizing { await pending?.value }
+        generation = UUID(); pending?.cancel(); liveTask?.cancel(); engine.stop()
+        await liveTask?.value; liveTask = nil
+        if currentPhase != .starting && currentPhase != .summarizing && currentPhase != .asking { await pending?.value }
         await recorder.cancel()
         phase = .idle
     }
@@ -381,6 +579,13 @@ final class MeetingModel: ObservableObject {
         change(&records[index])
         do { try store.save(records[index]) }
         catch { self.error = "L’audio est conservé, mais les informations de réunion n’ont pas pu être enregistrées : \(error.localizedDescription)" }
+    }
+    private func commit(_ id: UUID, change: (inout MeetingRecord) -> Void) throws {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { throw VeloceError.message("Cette réunion n’est plus disponible.") }
+        var changed = records[index]
+        change(&changed)
+        try store.save(changed)
+        records[index] = changed
     }
     private func finishError(_ error: Error, token: UUID) {
         guard generation == token, !Task.isCancelled else { return }
