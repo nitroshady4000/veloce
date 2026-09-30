@@ -19,12 +19,13 @@ if [[ -z "$UV_BIN" ]]; then
 fi
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ENGINE_DIR/.uv-cache}"
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$ENGINE_DIR/.python}"
-ARGS=(sync --frozen --python 3.12)
-if [[ "${1:-}" == "--parakeet" ]]; then
-  ARGS+=(--extra parakeet)
-elif [[ $# -gt 0 ]]; then
-  echo "Usage: bootstrap.sh [--parakeet]" >&2
-  exit 2
-fi
-"$UV_BIN" "${ARGS[@]}"
-echo "Véloce engine ready: $ENGINE_DIR/.venv/bin/python" >&2
+# Keep previously selected optional backends when installing another feature.
+ARGS=(sync --frozen --inexact --python 3.12)
+for option in "$@"; do
+  case "$option" in
+    --parakeet) ARGS+=(--extra parakeet) ;;
+    --meetings) ARGS+=(--extra meetings) ;;
+    *) echo "Usage: bootstrap.sh [--parakeet] [--meetings]" >&2; exit 2 ;;
+  esac
+done
+exec "$UV_BIN" "${ARGS[@]}"

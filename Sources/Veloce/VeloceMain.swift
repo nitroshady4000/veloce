@@ -2,12 +2,23 @@ import SwiftUI
 import AppKit
 import ImageIO
 import UniformTypeIdentifiers
+import VeloceCore
 
 @main
 struct VeloceMain {
     @MainActor static func main() {
         let args = CommandLine.arguments
-        if let index = args.firstIndex(of: "--render-design"), args.indices.contains(index + 1) {
+        if let index = args.firstIndex(of: "--verify-meeting-audio"), args.indices.contains(index + 1) {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            Task {
+                do {
+                    try await MeetingRecorder.verifyAudioPipeline(directory: URL(fileURLWithPath: args[index + 1]))
+                    print("Meeting audio pipeline verified"); exit(0)
+                } catch { fputs("Meeting audio check: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+            NSApp.run()
+        } else if let index = args.firstIndex(of: "--render-design"), args.indices.contains(index + 1) {
             do { try DesignExport.write(to: URL(fileURLWithPath: args[index + 1])) }
             catch { fputs("Design export: \(error.localizedDescription)\n", stderr); exit(1) }
         } else { VeloceApp.main() }
@@ -35,6 +46,19 @@ enum DesignExport {
         permissionRenderer.scale = 2
         guard let permissionImage = permissionRenderer.cgImage else { throw VeloceError.message("Unable to render permission guide") }
         try write(permissionImage, to: directory.appendingPathComponent("permission-guide.png"))
+        var meeting = MeetingRecord(title: "Point produit · Véloce")
+        meeting.duration = 1240; meeting.status = .transcribed
+        meeting.diarization = "sherpa-onnx-pyannote-wespeaker"
+        meeting.segments = [
+            MeetingSegment(id: "preview-1", start: 12, end: 18, speaker: "Vous", source: "microphone", text: "On conserve les deux pistes pour pouvoir reprendre la transcription plus tard."),
+            MeetingSegment(id: "preview-2", start: 19, end: 25, speaker: "Interlocuteur 1", source: "system", text: "Oui, et chacun pourra retrouver les décisions dans le compte rendu.")
+        ]
+        let meetingModel = MeetingModel(engine: EngineClient(), previewRecords: [meeting])
+        let meetingView = MeetingPageContent(meetings: meetingModel, modelName: "Qwen3 · 1.7B", start: {}, transcribe: { _ in }, prepare: {})
+            .padding(32).frame(width: 820).foregroundStyle(VeloceTheme.ink)
+            .background(VeloceTheme.paper).environment(\.colorScheme, .dark)
+        let meetingImage = try nativeSnapshot(meetingView, width: 820)
+        try write(meetingImage, to: directory.appendingPathComponent("meetings.png"))
         let gifURL = directory.appendingPathComponent("living-v.gif")
         guard let gif = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, 36, nil) else { return }
         CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
@@ -79,6 +103,38 @@ enum DesignExport {
         VelocePill(phase: phase, level: level, title: title, subtitle: subtitle, previewTime: time)
             .frame(maxWidth: .infinity)
     }
+
+    /// ImageRenderer cannot draw AppKit-backed fields, menus and checkboxes.
+    /// Give the real view hierarchy a backing window for AppKit's own bitmap
+    /// renderer. This window is never ordered on screen and cannot take focus.
+    private static func nativeSnapshot<Content: View>(_ content: Content, width: CGFloat) throws -> CGImage {
+        let hosting = NSHostingView(rootView: content.fixedSize(horizontal: false, vertical: true))
+        let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: width, height: 1),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(VeloceTheme.paper)
+        window.contentView = hosting
+        defer { window.contentView = nil; window.close() }
+        hosting.layoutSubtreeIfNeeded()
+        let height = ceil(hosting.fittingSize.height)
+        guard height.isFinite, height > 0, height < 20_000 else {
+            throw VeloceError.message("Invalid native preview dimensions")
+        }
+        window.setContentSize(NSSize(width: width, height: height))
+        hosting.setFrameSize(NSSize(width: width, height: height))
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            throw VeloceError.message("Unable to create native preview bitmap")
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        guard let image = bitmap.cgImage else {
+            throw VeloceError.message("Unable to render native meeting view")
+        }
+        return image
+    }
+
     private static func write(_ image: CGImage, to url: URL) throws {
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { throw VeloceError.message("Unable to write image") }
         CGImageDestinationAddImage(destination, image, nil)

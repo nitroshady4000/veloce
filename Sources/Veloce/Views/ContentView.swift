@@ -3,12 +3,14 @@ import VeloceCore
 
 private enum VelocePage: String, CaseIterable, Identifiable {
     case dictate = "Dicter"
+    case meetings = "Réunions"
     case models = "Modèles"
     case settings = "Réglages"
     var id: String { rawValue }
     var symbol: String {
         switch self {
         case .dictate: "waveform"
+        case .meetings: "person.2.wave.2"
         case .models: "square.stack.3d.up"
         case .settings: "slider.horizontal.3"
         }
@@ -40,6 +42,7 @@ struct ContentView: View {
                     .padding(.bottom, 2)
                     switch page {
                     case .dictate: DictationView()
+                    case .meetings: MeetingsView(meetings: model.meetings)
                     case .models: ModelsView()
                     case .settings: SettingsView()
                     }

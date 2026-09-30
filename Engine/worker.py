@@ -17,6 +17,9 @@ import sys
 import time
 import wave
 
+from errors import EngineError
+import meetings
+
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -47,12 +50,6 @@ MODELS = {
         "supports_context": False, "supports_language": False,
     },
 }
-
-
-class EngineError(Exception):
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code = code
 
 
 def validate_audio(path: str) -> tuple[Path, float]:
@@ -173,7 +170,21 @@ class Engine:
             raise EngineError("invalid_request", "params must be an object.")
         if method in ("status", "models"):
             return {"protocol_version": PROTOCOL_VERSION, "state": "ready" if self.backend else "idle",
-                    "model": self.model_id, "models": [{"id": key, **value} for key, value in MODELS.items()]}
+                    "model": self.model_id, "models": [{"id": key, **value} for key, value in MODELS.items()],
+                    "diarization_ready": meetings.diarization_ready()}
+        if method == "prepare_diarization":
+            return meetings.prepare_diarization(self.emit)
+        if method == "export_meeting_audio":
+            return meetings.export_meeting_audio(params)
+        if method == "transcribe_meeting":
+            model_id = params.get("model", self.model_id)
+            if self.backend is None or model_id != self.model_id:
+                raise EngineError("model_not_loaded", "Load the selected model before processing a meeting.")
+            self.emit({"event": "status", "state": "transcribing", "model": model_id})
+            try:
+                return meetings.transcribe_meeting(params, self.backend, self.emit)
+            finally:
+                self.emit({"event": "status", "state": "ready", "model": model_id})
         if method == "unload":
             self.unload()
             return {"state": "idle", "model": None}
@@ -211,7 +222,7 @@ class Engine:
                 self.emit({"event": "status", "state": "ready", "model": model_id})
             return {**result, "model": model_id, "audio_duration_seconds": duration,
                     "inference_seconds": round(time.perf_counter() - started, 4)}
-        raise EngineError("unknown_method", "Supported methods: status, models, load, transcribe, unload.")
+        raise EngineError("unknown_method", "Supported methods: status, models, load, transcribe, transcribe_meeting, prepare_diarization, export_meeting_audio, unload.")
 
 
 def serve(input_stream=sys.stdin, output_stream=sys.stdout, engine_factory=Engine):

@@ -11,5 +11,7 @@ jobs:
         run: swift test
       - name: Build development app
         run: bash scripts/build-app.sh
+      - name: Native meeting audio pipeline (synthetic, no capture)
+        run: build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-audio "$RUNNER_TEMP/veloce-meeting-audio"
       - name: Engine protocol tests (no weights)
         run: python3 -m unittest discover -s Engine -p 'test_*.py' -v

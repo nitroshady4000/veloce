@@ -10,6 +10,7 @@ enum VeloceError: LocalizedError {
 @MainActor
 final class EngineClient {
     private var process: Process?
+    private var installer: Process?
     private var input: FileHandle?
     private var output: FileHandle?
     private var errors: FileHandle?
@@ -18,6 +19,7 @@ final class EngineClient {
     private var deadlines: [String: Task<Void, Never>] = [:]
     var onStatus: ((String) -> Void)?
     var onExit: (() -> Void)?
+    var onMeetingProgress: ((Double, String) -> Void)?
 
     let directory: URL = {
         if let value = ProcessInfo.processInfo.environment["VELOCE_ENGINE_DIR"] {
@@ -31,14 +33,18 @@ final class EngineClient {
     var installed: Bool { FileManager.default.isExecutableFile(atPath: python.path) }
     private var python: URL { directory.appendingPathComponent(".venv/bin/python") }
 
-    func install(includeParakeet: Bool) async throws {
+    func install(includeParakeet: Bool, includeMeetings: Bool = false) async throws {
+        guard installer == nil else { throw VeloceError.message("Une installation du moteur est déjà en cours.") }
+        try Task.checkCancellation()
         let script = directory.appendingPathComponent("bootstrap.sh")
         guard FileManager.default.fileExists(atPath: script.path) else {
             throw VeloceError.message("Le moteur est introuvable. Reconstruisez Véloce avec scripts/build-app.sh.")
         }
         let task = Process()
+        installer = task
+        defer { installer = nil }
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
-        task.arguments = [script.path] + (includeParakeet ? ["--parakeet"] : [])
+        task.arguments = [script.path] + (includeParakeet ? ["--parakeet"] : []) + (includeMeetings ? ["--meetings"] : [])
         task.currentDirectoryURL = directory
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -47,17 +53,26 @@ final class EngineClient {
         let log = Pipe()
         task.standardOutput = log; task.standardError = log
         log.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            task.terminationHandler = { finished in
-                log.fileHandleForReading.readabilityHandler = nil
-                if finished.terminationStatus == 0 { continuation.resume() }
-                else { continuation.resume(throwing: VeloceError.message("Installation du moteur impossible. Lancez Engine/bootstrap.sh dans le Terminal pour voir le diagnostic (uv et réseau nécessaires).")) }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                task.terminationHandler = { finished in
+                    log.fileHandleForReading.readabilityHandler = nil
+                    if finished.terminationStatus == 0 { continuation.resume() }
+                    else { continuation.resume(throwing: VeloceError.message("Installation du moteur interrompue ou impossible. Réessayez, ou lancez Engine/bootstrap.sh dans le Terminal pour le diagnostic.")) }
+                }
+                do {
+                    try task.run()
+                    if Task.isCancelled { task.terminate() }
+                } catch {
+                    task.terminationHandler = nil
+                    log.fileHandleForReading.readabilityHandler = nil
+                    continuation.resume(throwing: error)
+                }
             }
-            do { try task.run() } catch {
-                log.fileHandleForReading.readabilityHandler = nil
-                continuation.resume(throwing: error)
-            }
+        } onCancel: {
+            Task { @MainActor in if task.isRunning { task.terminate() } }
         }
+        try Task.checkCancellation()
     }
 
     func request(_ method: String, params: [String: Any] = [:], timeout: Double = 180) async throws -> EngineReply.Result {
@@ -121,6 +136,9 @@ final class EngineClient {
             for line in try framing.append(data) {
                 let reply = try JSONDecoder().decode(EngineReply.self, from: line)
                 if let state = reply.state { onStatus?(state) }
+                if reply.event == "meeting_progress", let progress = reply.progress {
+                    onMeetingProgress?(min(1, max(0, progress)), reply.detail ?? "Traitement de la réunion…")
+                }
                 guard let id = reply.id else { continue }
                 if let error = reply.error { fail(id, error: VeloceError.message(error.message)) }
                 else if let result = reply.result {
@@ -137,6 +155,7 @@ final class EngineClient {
     }
 
     func stop(reason: String = "Opération annulée.") {
+        if installer?.isRunning == true { installer?.terminate() }
         output?.readabilityHandler = nil; errors?.readabilityHandler = nil
         let worker = process; process = nil
         worker?.terminationHandler = nil

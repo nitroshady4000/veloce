@@ -41,11 +41,22 @@ final class AppModel: ObservableObject {
     var inputReady: Bool { accessibilityGranted && hotkeyReady }
     var allPermissionsReady: Bool { microphoneGranted && inputReady }
     @Published var engineInstalled = false
-    var isBusy: Bool { phase == .preparing || phase == .recording || phase == .transcribing }
+    @Published private(set) var meetingBusy = false
+    var isBusy: Bool { meetingBusy || phase == .preparing || phase == .recording || phase == .transcribing }
     var isRecording: Bool { phase == .recording }
     var engineReady: Bool { loadedModel == selectedModel && phase != .preparing }
     private let permissions = PermissionCoordinator()
     private let engine = EngineClient()
+    lazy var meetings: MeetingModel = {
+        let meetings = MeetingModel(engine: engine)
+        meetings.canBegin = { [weak self] in self?.isBusy == false }
+        meetings.onBusyChange = { [weak self] in self?.meetingBusy = $0 }
+        meetings.onModelLoaded = { [weak self] model in
+            self?.loadedModel = model
+            self?.phase = .ready
+        }
+        return meetings
+    }()
     private let recorder = AudioRecorder()
     private let hotkey = FnKeyMonitor()
     private let inserter = TextInserter()

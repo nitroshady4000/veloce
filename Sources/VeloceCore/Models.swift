@@ -44,12 +44,19 @@ public struct EngineReply: Decodable, Sendable {
     public let event: String?
     public let state: String?
     public let model: String?
+    public let progress: Double?
+    public let detail: String?
     public struct Result: Decodable, Sendable {
         public let text: String?
         public let model: String?
         public let language: String?
         public let audio_duration_seconds: Double?
         public let inference_seconds: Double?
+        public let segments: [MeetingSegment]?
+        public let duration: Double?
+        public let diarization: String?
+        public let diarization_ready: Bool?
+        public let path: String?
     }
     public struct Failure: Decodable, Sendable {
         public let code: String

@@ -11,6 +11,7 @@
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Véloce utilise le microphone uniquement pendant vos dictées. L’audio est transcrit sur ce Mac puis supprimé.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Véloce utilise le microphone pendant vos dictées et vos réunions. Les dictées sont supprimées après transcription ; les pistes des réunions restent sur ce Mac jusqu’à leur suppression.</string>
+    <key>NSScreenCaptureUsageDescription</key><string>Véloce enregistre l’audio des autres apps sur une piste séparée pendant vos réunions. Aucune image ni vidéo n’est enregistrée.</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>

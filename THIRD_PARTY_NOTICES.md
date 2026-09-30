@@ -19,6 +19,18 @@ Python dependency versions and artifact hashes are recorded in `Engine/uv.lock`.
 
 ## Installed dependency license inventory
 
+### Meeting speaker detection
+
+| Component | Version / immutable revision | License / attribution |
+| --- | --- | --- |
+| [Sherpa ONNX](https://github.com/k2-fsa/sherpa-onnx) (`sherpa-onnx`, `sherpa-onnx-core`) | 1.13.8 | Apache-2.0; k2-fsa and contributors |
+| [Pyannote segmentation 3.0, ONNX int8 conversion](https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0) | `9403a6902bb58e3d5ae8c7e77c3422de279db2e0` | MIT; pyannote contributors, conversion distributed by csukuangfj |
+| [WeSpeaker ResNet34 LM, ONNX conversion](https://huggingface.co/csukuangfj/speaker-embedding-models) | `0743f301363dec56491a490f6d6cbc9d67f9a3bf` | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); [WeSpeaker](https://github.com/wenet-e2e/wespeaker) contributors, ONNX distribution by csukuangfj |
+
+The model conversions change storage/runtime representation. Véloce uses these converted weights unchanged, downloads them explicitly, and verifies their SHA-256 hashes. Attribution does not imply endorsement. Apple's ScreenCaptureKit and optional Foundation Models framework are system dependencies under Apple's platform terms; the meeting summary uses `SystemLanguageModel`, never Private Cloud Compute. No MacParakeet source code is incorporated in the meeting implementation; its public audio design informed the choice to retain independent tracks and export microphone-left/system-right stereo.
+
+### Base speech environment
+
 The following inventory is extracted from the locked macOS Python 3.12 environment on 2026-09-30, including the optional Parakeet extra. Package metadata may use broader names such as “BSD”; the distribution's actual license files remain authoritative. Optional audio packages include LGPL components and must retain their corresponding notices and redistribution terms if bundled.
 
 | Package | Version | Declared license |

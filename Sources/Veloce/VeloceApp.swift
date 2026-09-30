@@ -43,7 +43,7 @@ private struct MenuContent: View {
         Text("Maintenir Fn pour dicter")
         if let latest = model.history.first { Button("Copier le dernier texte") { model.copyTranscript(latest.text) } }
         Divider()
-        Button("Quitter Véloce") { model.shutdown(); NSApp.terminate(nil) }.keyboardShortcut("q")
+        Button("Quitter Véloce") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
 
@@ -51,6 +51,7 @@ private struct MenuContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var model: AppModel?
     private var panel: NSPanel?
+    private var terminating = false
     func configure(_ model: AppModel) {
         guard self.model == nil else { return }
         self.model = model
@@ -74,5 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.orderFrontRegardless()
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model, model.meetingBusy else { return .terminateNow }
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task {
+            await model.meetings.finishForTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
     func applicationWillTerminate(_ notification: Notification) { model?.shutdown() }
 }
