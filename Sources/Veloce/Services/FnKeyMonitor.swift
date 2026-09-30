@@ -17,6 +17,11 @@ final class FnKeyMonitor {
     private var callbackGeneration = UUID()
     private var deliveredPressActive = false
 
+    var isRunning: Bool {
+        guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
+        return CGEvent.tapIsEnabled(tap: eventTap)
+    }
+
     @discardableResult
     func start(
         onPress: @escaping () -> Void,
@@ -62,6 +67,7 @@ final class FnKeyMonitor {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        guard isRunning else { stop(); return false }
         return true
     }
 

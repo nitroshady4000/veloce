@@ -11,8 +11,8 @@ struct DictationView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     SectionEyebrow(text: "Moins de clavier. Plus d’élan.")
                     Text("L’esprit libre.\nLes mots suivent.")
-                        .font(.system(size: 43, weight: .regular, design: .serif))
-                        .tracking(-1.8)
+                        .font(.system(size: 41, weight: .medium, design: .rounded))
+                        .tracking(-1.6)
                         .lineSpacing(0)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("Maintenez **Fn**, parlez, relâchez.\nVotre texte apparaît là où vous écrivez.")
@@ -38,7 +38,7 @@ struct DictationView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(model.phase == .error ? VeloceTheme.accent : model.engineReady ? VeloceTheme.green : VeloceTheme.secondary)
+                            .fill(model.phase == .error ? VeloceTheme.error : model.engineReady ? VeloceTheme.green : VeloceTheme.secondary)
                             .frame(width: 5, height: 5)
                         Text(model.statusMessage)
                             .font(.system(size: 11, weight: .medium))
@@ -59,7 +59,7 @@ struct DictationView: View {
 
             HStack(spacing: 9) {
                 ReadinessChip(title: "Microphone", ready: model.microphoneGranted, symbol: "mic", action: model.requestMicrophone)
-                ReadinessChip(title: "Accessibilité", ready: model.accessibilityGranted, symbol: "cursorarrow.rays", action: model.requestAccessibility)
+                ReadinessChip(title: "Fn et insertion", ready: model.inputReady, symbol: "cursorarrow.rays", action: model.requestAccessibility)
                 ReadinessChip(title: "Modèle local", ready: model.engineReady, symbol: "cpu", action: model.prepareModel)
                     .disabled(model.isBusy)
             }
@@ -85,7 +85,7 @@ struct DictationView: View {
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Une pensée ? Dites-la.")
-                                .font(.system(size: 18, weight: .regular, design: .serif))
+                                .font(.system(size: 18, weight: .medium, design: .rounded))
                             Text(model.keepHistory ? "Votre dernière dictée apparaîtra ici, prête à être retrouvée ou copiée." : "Vos dictées seront insérées directement, sans être conservées dans l’historique.")
                                 .font(.system(size: 12))
                                 .lineSpacing(4)
@@ -108,7 +108,7 @@ struct DictationView: View {
         if model.phase == .preparing { return "Préparation…" }
         if model.phase == .transcribing { return "Transcription…" }
         if !model.microphoneGranted { return "Autoriser le micro" }
-        if !model.accessibilityGranted { return "Autoriser l’insertion" }
+        if !model.inputReady { return "Configurer Fn et l’insertion" }
         if !model.engineReady { return "Préparer mon modèle" }
         return "Commencer à dicter"
     }
@@ -123,7 +123,7 @@ struct DictationView: View {
     private func primaryAction() {
         if model.isRecording { model.toggleRecording() }
         else if !model.microphoneGranted { model.requestMicrophone() }
-        else if !model.accessibilityGranted { model.requestAccessibility() }
+        else if !model.inputReady { model.requestAccessibility() }
         else if !model.engineReady { model.prepareModel() }
         else { model.toggleRecording() }
     }
@@ -180,8 +180,8 @@ private struct ReadinessChip: View {
             .padding(.horizontal, 11)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
-            .background(VeloceTheme.card, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(VeloceTheme.line.opacity(0.7), lineWidth: 1))
+            .background(ready ? VeloceTheme.green.opacity(0.055) : VeloceTheme.card, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(ready ? VeloceTheme.green.opacity(0.14) : VeloceTheme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title) : \(ready ? "prêt" : "à configurer")")
@@ -206,19 +206,19 @@ private struct FnKeyVisual: View {
             VStack(spacing: 19) {
                 ZStack(alignment: .bottomLeading) {
                     RoundedRectangle(cornerRadius: 19)
-                        .fill(VeloceTheme.line.opacity(0.65))
+                        .fill(Color.black.opacity(0.28))
                         .offset(y: 5)
                     RoundedRectangle(cornerRadius: 19)
-                        .fill(model.isRecording ? VeloceTheme.accent : VeloceTheme.paper)
-                        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(Color.white.opacity(0.95), lineWidth: 2))
-                        .shadow(color: VeloceTheme.ink.opacity(0.08), radius: 12, x: 0, y: 8)
+                        .fill(model.isRecording ? VeloceTheme.accent : VeloceTheme.surfaceRaised)
+                        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(model.isRecording ? VeloceTheme.gold.opacity(0.7) : Color.white.opacity(0.20), lineWidth: 1))
+                        .shadow(color: model.isRecording ? VeloceTheme.amber.opacity(0.20) : .black.opacity(0.22), radius: 18, x: 0, y: 8)
                     VStack(alignment: .leading, spacing: 16) {
                         Image(systemName: "globe")
                             .font(.system(size: 17, weight: .light))
                         Text("fn")
                             .font(.system(size: 30, weight: .regular, design: .rounded))
                     }
-                    .foregroundStyle(model.isRecording ? Color.white : VeloceTheme.ink)
+                    .foregroundStyle(model.isRecording ? VeloceTheme.paper : VeloceTheme.ember)
                     .padding(17)
                 }
                 .frame(width: 94, height: 103)

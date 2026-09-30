@@ -26,37 +26,68 @@ func renderIcon(pixels: Int) throws -> Data {
 
     let tile = NSBezierPath(roundedRect: NSRect(x: 79, y: 79, width: 866, height: 866), xRadius: 194, yRadius: 194)
     let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.15)
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.30)
     shadow.shadowBlurRadius = 22
     shadow.shadowOffset = NSSize(width: 0, height: -12)
     shadow.set()
-    NSColor(srgbRed: 0.957, green: 0.947, blue: 0.922, alpha: 1).setFill()
+    NSColor(srgbRed: 0.10, green: 0.09, blue: 0.075, alpha: 1).setFill()
     tile.fill()
     NSShadow().set()
 
+    NSGradient(colors: [
+        NSColor(srgbRed: 0.078, green: 0.068, blue: 0.056, alpha: 1),
+        NSColor(srgbRed: 0.177, green: 0.157, blue: 0.126, alpha: 1)
+    ])?.draw(in: tile, angle: 90)
+
     let inner = NSBezierPath(roundedRect: NSRect(x: 86, y: 86, width: 852, height: 852), xRadius: 187, yRadius: 187)
-    NSColor.white.withAlphaComponent(0.62).setStroke()
-    inner.lineWidth = 3
+    NSColor(srgbRed: 1, green: 0.88, blue: 0.67, alpha: 0.20).setStroke()
+    inner.lineWidth = 2
     inner.stroke()
 
-    // Direction and spacing match the app's drawn mark, enlarged optically.
-    let mark = NSBezierPath()
-    mark.move(to: NSPoint(x: 267, y: 592))
-    mark.line(to: NSPoint(x: 432, y: 295))
-    mark.curve(to: NSPoint(x: 478, y: 295), controlPoint1: NSPoint(x: 445, y: 268), controlPoint2: NSPoint(x: 463, y: 268))
-    mark.line(to: NSPoint(x: 743, y: 720))
-    mark.lineWidth = 74
-    mark.lineCapStyle = .round
-    mark.lineJoinStyle = .round
-    NSColor(srgbRed: 0.79, green: 0.27, blue: 0.18, alpha: 1).setStroke()
-    mark.stroke()
+    // One clear V, with Famulus' gold-to-coral light on warm dark glass.
+    // Match the SwiftUI glyph; the app animates this same silhouette.
+    let mark = CGMutablePath()
+    mark.move(to: CGPoint(x: 267, y: 592))
+    mark.addLine(to: CGPoint(x: 432, y: 295))
+    mark.addCurve(to: CGPoint(x: 478, y: 295), control1: CGPoint(x: 445, y: 268), control2: CGPoint(x: 463, y: 268))
+    mark.addLine(to: CGPoint(x: 743, y: 720))
+    let cg = context.cgContext
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    cg.saveGState()
+    cg.addPath(mark)
+    cg.setLineWidth(74)
+    cg.setLineCap(.round)
+    cg.setLineJoin(.round)
+    cg.setStrokeColor(NSColor(srgbRed: 1, green: 0.71, blue: 0.28, alpha: 0.76).cgColor)
+    cg.setShadow(offset: .zero, blur: 46, color: NSColor(srgbRed: 1, green: 0.47, blue: 0.21, alpha: 0.48).cgColor)
+    cg.strokePath()
+    cg.restoreGState()
 
-    let dash = NSBezierPath()
-    dash.move(to: NSPoint(x: 553, y: 710))
-    dash.line(to: NSPoint(x: 638, y: 710))
-    dash.lineWidth = 38
-    dash.lineCapStyle = .round
-    dash.stroke()
+    cg.saveGState()
+    cg.addPath(mark)
+    cg.setLineWidth(74)
+    cg.setLineCap(.round)
+    cg.setLineJoin(.round)
+    cg.replacePathWithStrokedPath()
+    cg.clip()
+    let colors = [
+        NSColor(srgbRed: 1, green: 0.435, blue: 0.369, alpha: 1).cgColor,
+        NSColor(srgbRed: 1, green: 0.710, blue: 0.278, alpha: 1).cgColor,
+        NSColor(srgbRed: 1, green: 0.839, blue: 0.420, alpha: 1).cgColor,
+        NSColor(srgbRed: 1, green: 0.890, blue: 0.639, alpha: 1).cgColor
+    ]
+    if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0, 0.38, 0.77, 1]) {
+        cg.drawLinearGradient(gradient, start: CGPoint(x: 335, y: 260), end: CGPoint(x: 685, y: 750), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+    }
+    // A restrained violet reflection along the lower edge recalls the pill's
+    // spectrum without turning the small icon into a multicolour illustration.
+    if let reflection = CGGradient(colorsSpace: colorSpace, colors: [
+        NSColor(srgbRed: 0.56, green: 0.36, blue: 1, alpha: 0.30).cgColor,
+        NSColor(srgbRed: 0.56, green: 0.36, blue: 1, alpha: 0).cgColor
+    ] as CFArray, locations: [0, 1]) {
+        cg.drawLinearGradient(reflection, start: CGPoint(x: 370, y: 255), end: CGPoint(x: 490, y: 375), options: [])
+    }
+    cg.restoreGState()
     NSGraphicsContext.restoreGraphicsState()
 
     guard let png = bitmap.representation(using: .png, properties: [:]) else {

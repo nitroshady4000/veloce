@@ -10,7 +10,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionEyebrow(text: "Juste l’essentiel")
                 Text("Faites comme chez vous.")
-                    .font(.system(size: 38, weight: .regular, design: .serif))
+                    .font(.system(size: 36, weight: .medium, design: .rounded))
                     .tracking(-1.3)
                 Text("Quelques réglages pour une dictée qui vous ressemble.")
                     .font(.system(size: 13))
@@ -24,15 +24,15 @@ struct SettingsView: View {
                     VStack(spacing: 18) {
                         permissionRow(title: "Microphone", detail: "Pour vous entendre pendant la dictée.", symbol: "mic", granted: model.microphoneGranted, action: model.requestMicrophone)
                         Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
-                        permissionRow(title: "Accessibilité", detail: "Pour utiliser Fn et insérer le texte dans vos apps.", symbol: "cursorarrow.rays", granted: model.accessibilityGranted, action: model.requestAccessibility)
+                        permissionRow(title: "Fn et insertion", detail: model.accessibilityGranted && !model.hotkeyReady ? "Accès autorisé ; le raccourci reste à vérifier." : "Pour utiliser Fn et insérer le texte dans vos apps.", symbol: "cursorarrow.rays", granted: model.inputReady, action: model.requestAccessibility)
                     }
                 }
                 HStack {
-                    Text("Après une autorisation, actualisez leur état.")
+                    Text("Les permissions se vérifient automatiquement.")
                         .font(.system(size: 10))
                         .foregroundStyle(VeloceTheme.secondary)
                     Spacer()
-                    Button("Actualiser", action: model.refreshPermissions)
+                    Button("Ouvrir le guide", action: model.requestMicrophone)
                         .buttonStyle(.plain)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(VeloceTheme.accent)
@@ -77,7 +77,7 @@ struct SettingsView: View {
                                 .foregroundStyle(VeloceTheme.secondary)
                             ZStack(alignment: .topLeading) {
                                 if model.vocabulary.isEmpty {
-                                    Text("Véloce\nFamulus\nFlamèche")
+                                    Text("Véloce\nFamulus\nParakeet")
                                         .foregroundStyle(VeloceTheme.secondary.opacity(0.55))
                                         .padding(.horizontal, 7)
                                         .padding(.vertical, 8)
@@ -122,7 +122,7 @@ struct SettingsView: View {
                             Button("Effacer l’historique") { confirmClearHistory = true }
                                 .buttonStyle(.plain)
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(VeloceTheme.accent)
+                                .foregroundStyle(VeloceTheme.error)
                                 .disabled(model.history.isEmpty)
                         }
                     }
@@ -176,7 +176,7 @@ struct SettingsView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(VeloceTheme.green)
             } else {
-                Button("Autoriser", action: action)
+                Button("Configurer", action: action)
                     .buttonStyle(VeloceButtonStyle(prominent: false))
             }
         }

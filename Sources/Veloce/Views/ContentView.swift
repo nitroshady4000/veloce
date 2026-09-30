@@ -29,9 +29,13 @@ struct ContentView: View {
                         Text(page.rawValue)
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Label("Sur votre Mac", systemImage: "lock.shield")
+                        Label("100 % local", systemImage: "lock.shield")
                             .font(.system(size: 11))
                             .foregroundStyle(VeloceTheme.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(VeloceTheme.card, in: Capsule())
+                            .overlay(Capsule().strokeBorder(VeloceTheme.line, lineWidth: 1))
                     }
                     .padding(.bottom, 2)
                     switch page {
@@ -51,17 +55,26 @@ struct ContentView: View {
         .foregroundStyle(VeloceTheme.ink)
         .background(VeloceTheme.paper)
         .frame(minWidth: 900, minHeight: 650)
-        .preferredColorScheme(.light)
+        .tint(VeloceTheme.accent)
+        .preferredColorScheme(.dark)
         .onAppear { model.refreshPermissions() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshPermissions()
+        }
+        .sheet(item: $model.permissionGuide) { permission in
+            PermissionGuideView(initialPermission: permission)
+                .environmentObject(model)
+        }
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 9) {
                 VeloceMark(size: 30)
+                    .shadow(color: VeloceTheme.amber.opacity(0.28), radius: 12)
                 Text("Véloce")
-                    .font(.system(size: 29, weight: .medium, design: .serif))
-                    .tracking(-1.3)
+                    .font(.system(size: 27, weight: .semibold, design: .rounded))
+                    .tracking(-1.1)
             }
             .padding(.top, 38)
             Text("Votre voix, simplement.")
@@ -89,9 +102,10 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 13)
                         .padding(.vertical, 12)
-                        .foregroundStyle(page == item ? VeloceTheme.ink : VeloceTheme.secondary)
-                        .background(page == item ? Color.white.opacity(0.74) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-                        .contentShape(RoundedRectangle(cornerRadius: 9))
+                        .foregroundStyle(page == item ? VeloceTheme.ember : VeloceTheme.secondary)
+                        .background(page == item ? VeloceTheme.amber.opacity(0.09) : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(page == item ? VeloceTheme.amber.opacity(0.15) : Color.clear, lineWidth: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(page == item ? .isSelected : [])

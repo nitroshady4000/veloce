@@ -9,7 +9,7 @@ struct ModelsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionEyebrow(text: "Le bon moteur, pour vos mots")
                 Text("À votre rythme.")
-                    .font(.system(size: 43, weight: .regular, design: .serif))
+                    .font(.system(size: 41, weight: .medium, design: .rounded))
                     .tracking(-1.5)
                 Text("Trois modèles locaux. Choisissez votre équilibre entre finesse et rapidité.")
                     .font(.system(size: 13))
@@ -31,7 +31,7 @@ struct ModelsView: View {
                         .foregroundStyle(model.engineReady ? VeloceTheme.green : VeloceTheme.accent)
                     VStack(alignment: .leading, spacing: 8) {
                         Text(model.engineReady ? "Prêt pour vos prochaines idées." : "Un téléchargement, puis la liberté.")
-                            .font(.system(size: 17, weight: .regular, design: .serif))
+                            .font(.system(size: 17, weight: .medium, design: .rounded))
                         Text(model.statusMessage)
                             .font(.system(size: 12))
                             .foregroundStyle(VeloceTheme.secondary)
@@ -75,7 +75,7 @@ struct ModelsView: View {
                 } label: {
                     Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                         .font(.system(size: 17, weight: .light))
-                        .foregroundStyle(selected ? VeloceTheme.accent : VeloceTheme.line)
+                        .foregroundStyle(selected ? VeloceTheme.accent : VeloceTheme.tertiary)
                         .frame(width: 24, height: 30)
                 }
                 .buttonStyle(.plain)
@@ -85,7 +85,7 @@ struct ModelsView: View {
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text(option.title)
-                    .font(.system(size: 23, weight: .regular, design: .serif))
+                    .font(.system(size: 23, weight: .medium, design: .rounded))
                     .tracking(-0.7)
                 Text(option.name)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -127,7 +127,7 @@ struct ModelsView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(selected ? Color.white.opacity(0.84) : VeloceTheme.card, in: RoundedRectangle(cornerRadius: 15))
-        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(selected ? VeloceTheme.accent.opacity(0.70) : VeloceTheme.line.opacity(0.75), lineWidth: 1))
+        .background(selected ? VeloceTheme.amber.opacity(0.075) : VeloceTheme.card, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(selected ? VeloceTheme.accent.opacity(0.50) : VeloceTheme.line, lineWidth: 1))
     }
 }

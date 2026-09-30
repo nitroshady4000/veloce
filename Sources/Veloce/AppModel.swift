@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     @Published var phase: DictationPhase = .idle
     @Published var statusMessage = "Une idée ? Dites-la."
     @Published var level: Double = 0
+    @Published private(set) var transcriptInserted = false
     @Published var selectedModel: SpeechModel {
         didSet { UserDefaults.standard.set(selectedModel.rawValue, forKey: "model") }
     }
@@ -30,10 +31,20 @@ final class AppModel: ObservableObject {
     }
     @Published var microphoneGranted = false
     @Published var accessibilityGranted = false
+    @Published private(set) var microphonePermission: MicrophonePermission = .notDetermined
+    @Published private(set) var hotkeyReady = false
+    @Published private(set) var requestingMicrophone = false
+    @Published private(set) var accessibilityRequested = false
+    @Published private(set) var permissionSettingsOpened: VelocePermission?
+    @Published private(set) var permissionError: String?
+    @Published var permissionGuide: VelocePermission?
+    var inputReady: Bool { accessibilityGranted && hotkeyReady }
+    var allPermissionsReady: Bool { microphoneGranted && inputReady }
     @Published var engineInstalled = false
     var isBusy: Bool { phase == .preparing || phase == .recording || phase == .transcribing }
     var isRecording: Bool { phase == .recording }
     var engineReady: Bool { loadedModel == selectedModel && phase != .preparing }
+    private let permissions = PermissionCoordinator()
     private let engine = EngineClient()
     private let recorder = AudioRecorder()
     private let hotkey = FnKeyMonitor()
@@ -41,10 +52,10 @@ final class AppModel: ObservableObject {
     private var target: NSRunningApplication?
     private var recordingStarted: Date?
     private var recordingLimit: Task<Void, Never>?
+    private var hudDismissal: Task<Void, Never>?
     private var operation: Task<Void, Never>?
     private var generation = UUID()
     private var heldFn = false
-    private var hotkeyRunning = false
     private var permissionTimer: Timer?
     var onHUDVisibility: ((Bool) -> Void)?
     private var historyURL: URL {
@@ -76,35 +87,88 @@ final class AppModel: ObservableObject {
     }
 
     func refreshPermissions() {
-        microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        accessibilityGranted = AXIsProcessTrusted()
-        if accessibilityGranted && !hotkeyRunning {
-            hotkeyRunning = hotkey.start(onPress: { [weak self] in
+        let snapshot = permissions.snapshot()
+        microphonePermission = snapshot.microphone
+        microphoneGranted = snapshot.microphone == .granted
+        accessibilityGranted = snapshot.accessibility
+
+        let microphoneInterrupted = isRecording && !microphoneGranted
+        let shortcutInterrupted = isRecording && heldFn && (!accessibilityGranted || !hotkey.isRunning)
+        if microphoneInterrupted || shortcutInterrupted {
+            // Do not keep listening when Fn's release can no longer arrive.
+            // A manually started recording can continue without Accessibility.
+            heldFn = false
+            cancel()
+        }
+
+        if !accessibilityGranted {
+            hotkey.stop()
+        } else if !hotkey.isRunning {
+            hotkey.start(onPress: { [weak self] in
                 guard let self else { return }; self.heldFn = true
                 self.startRecording(fromHotkey: true)
             }, onRelease: { [weak self] in
                 self?.heldFn = false
                 if self?.isRecording == true { self?.finishRecording() }
             }, onCancel: { [weak self] in self?.heldFn = false; self?.cancel() })
-        } else if !accessibilityGranted && hotkeyRunning { hotkey.stop(); hotkeyRunning = false }
+        }
+        hotkeyReady = accessibilityGranted && hotkey.isRunning
+        if microphoneInterrupted {
+            statusMessage = "Dictée annulée : l’accès au microphone a été retiré."
+        } else if shortcutInterrupted {
+            statusMessage = "Dictée annulée : Fn a perdu son accès. Vérifiez les permissions."
+        }
     }
 
-    func requestMicrophone() {
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            Task { _ = await AVCaptureDevice.requestAccess(for: .audio); refreshPermissions() }
-        } else { openSettings("Privacy_Microphone") }
+    func requestMicrophone() { showPermissionGuide(.microphone) }
+    func requestAccessibility() { showPermissionGuide(.accessibility) }
+
+    private func showPermissionGuide(_ permission: VelocePermission) {
+        refreshPermissions()
+        permissionError = nil
+        permissionGuide = permission
     }
-    func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        openSettings("Privacy_Accessibility")
+
+    func authorizeMicrophone() {
+        guard !requestingMicrophone else { return }
+        permissionError = nil
+        guard microphonePermission == .notDetermined else {
+            if microphonePermission == .denied { openPermissionSettings(.microphone) }
+            return
+        }
+        requestingMicrophone = true
+        Task {
+            await permissions.requestMicrophone()
+            requestingMicrophone = false
+            refreshPermissions()
+        }
     }
-    private func openSettings(_ pane: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
+
+    func authorizeAccessibility() {
+        permissionError = nil
+        if accessibilityRequested {
+            openPermissionSettings(.accessibility)
+        } else {
+            accessibilityRequested = true
+            permissions.requestAccessibility()
+            refreshPermissions()
+        }
     }
+
+    func openPermissionSettings(_ permission: VelocePermission) {
+        permissionError = nil
+        if permissions.openSettings(for: permission) {
+            permissionSettingsOpened = permission
+        } else {
+            permissionError = "Ouvrez Réglages Système → Confidentialité et sécurité, puis la permission indiquée."
+        }
+    }
+
+    func revealApplicationForPermissions() { permissions.revealApplication() }
 
     func prepareModel() {
         guard !isBusy else { return }
+        hudDismissal?.cancel(); onHUDVisibility?(false)
         let model = selectedModel
         generation = UUID()
         let token = generation
@@ -143,6 +207,7 @@ final class AppModel: ObservableObject {
             try recorder.start()
             recordingStarted = Date()
             inserter.captureTarget(target)
+            hudDismissal?.cancel()
             generation = UUID()
             phase = .recording; statusMessage = "À vous. On vous écoute."
             onHUDVisibility?(true)
@@ -188,9 +253,14 @@ final class AppModel: ObservableObject {
                     if keepHistory { saveHistory() }
                     let inserted = await inserter.insert(text, into: target)
                     guard token == generation, !Task.isCancelled else { return }
+                    transcriptInserted = inserted
                     phase = .ready
                     statusMessage = inserted ? "C’est écrit. À la prochaine idée." : "Votre texte est prêt. Cliquez sur Copier."
-                    onHUDVisibility?(false)
+                    hudDismissal = Task {
+                        try? await Task.sleep(nanoseconds: 1_400_000_000)
+                        guard !Task.isCancelled, token == generation, phase == .ready else { return }
+                        onHUDVisibility?(false)
+                    }
                 } catch {
                     guard token == generation, !Task.isCancelled else { return }
                     phase = .error; statusMessage = error.localizedDescription; onHUDVisibility?(false)
@@ -220,5 +290,5 @@ final class AppModel: ObservableObject {
             try JSONEncoder().encode(history).write(to: historyURL, options: .atomic)
         } catch { statusMessage = "Texte prêt ; l’historique n’a pas pu être enregistré." }
     }
-    func shutdown() { hotkey.stop(); recorder.cancel(); engine.stop(); permissionTimer?.invalidate(); recordingLimit?.cancel(); operation?.cancel() }
+    func shutdown() { hotkey.stop(); recorder.cancel(); engine.stop(); permissionTimer?.invalidate(); recordingLimit?.cancel(); hudDismissal?.cancel(); operation?.cancel() }
 }

@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 
-@main
 struct VeloceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
@@ -10,7 +9,7 @@ struct VeloceApp: App {
             ContentView()
                 .environmentObject(model)
                 .onAppear { delegate.configure(model) }
-                .preferredColorScheme(.light)
+                .preferredColorScheme(.dark)
         }
         .defaultSize(width: 1000, height: 720)
         .windowStyle(.hiddenTitleBar)
@@ -60,16 +59,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showHUD(_ visible: Bool) {
         guard visible, let model else { panel?.orderOut(nil); return }
         if panel == nil {
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 90), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = NSPanel(contentRect: CGRect(origin: .zero, size: PillLayout.canvas), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.isFloatingPanel = true; panel.level = .floating
             panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hidesOnDeactivate = false
-            panel.contentView = NSHostingView(rootView: RecordingHUDView().environmentObject(model).preferredColorScheme(.light))
+            panel.contentView = NSHostingView(rootView: RecordingHUDView().environmentObject(model).preferredColorScheme(.dark))
             self.panel = panel
         }
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main {
-            panel?.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 160, y: screen.visibleFrame.minY + 28))
+            panel?.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - PillLayout.canvas.width / 2,
+                                         y: screen.visibleFrame.minY + PillLayout.bottom - PillLayout.margin + PillLayout.bulbOverhang))
         }
         panel?.orderFrontRegardless()
     }

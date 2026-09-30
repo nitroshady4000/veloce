@@ -8,7 +8,8 @@ Une petite app de dictée pour macOS et Apple Silicon. Maintenez **Fn**, parlez,
 
 ## Première version de développement
 
-- Dictée avec Fn / Globe, capsule flottante et niveau du micro.
+- Dictée avec Fn / Globe, pill en verre et V animé au rythme de la voix.
+- Palette Feu follet de Famulus : graphite, ambre et lumière colorée. Interface SwiftUI native, animations Metal, prise en compte de Réduire les animations et Réduire la transparence.
 - Trois modèles locaux : Qwen3-ASR 1.7B 8-bit (Précision), Qwen3-ASR 0.6B 8-bit (Équilibre), Parakeet TDT 0.6B v3 (Alternative).
 - Modèle conservé en mémoire entre deux dictées ; pas de lancement Python à chaque phrase.
 - Français ou détection automatique. Vocabulaire personnel transmis à Qwen.
@@ -35,7 +36,17 @@ Dans **Modèles**, choisissez un profil puis préparez-le. Véloce crée un envi
 
 Les builds de développement utilisent `Engine/` dans le checkout : conservez le dépôt à cet emplacement. Le packaging autonome d’un runtime signé reste à faire avant distribution publique.
 
-Autorisez le **microphone** et l’**accessibilité** dans Réglages. L’accessibilité sert à écouter Fn et à insérer le texte. Si Globe ouvre toujours le sélecteur d’émojis, réglez « Appuyer sur la touche 🌐 pour » sur « Ne rien faire » dans Réglages Système → Clavier. Redémarrez Véloce si macOS conserve une ancienne autorisation après reconstruction de l’app.
+Dans Véloce, les boutons **Microphone** et **Fn et insertion** ouvrent un guide. Il déclenche la demande native ou ouvre le panneau approprié de Réglages Système, puis vérifie automatiquement les accès. Fn est déclaré prêt seulement quand son écouteur a réellement démarré. L’accessibilité sert à écouter Fn et à insérer le texte.
+
+Si Globe ouvre toujours le sélecteur d’émojis, réglez « Appuyer sur la touche 🌐 pour » sur « Ne rien faire » dans Réglages Système → Clavier.
+
+La signature ad hoc de développement change à chaque recompilation : macOS peut conserver une ancienne autorisation cochée. Dans l’aide du guide, **Retrouver cette app** montre le bundle en cours d’exécution. Retirez l’ancienne entrée dans Accessibilité, ajoutez ce bundle et activez-le ; relancez Véloce si macOS le demande. Pour des builds utilisant une identité de signature installée dans votre trousseau :
+
+```sh
+VELOCE_SIGN_IDENTITY="Apple Development: Votre nom (TEAMID)" bash scripts/build-app.sh
+```
+
+Véloce ne modifie pas les autorisations système à votre place. Une identité de signature stable est nécessaire pour rendre les mises à jour fiables ; la signature et la notarisation des releases restent à mettre en place.
 
 Placez le curseur dans un champ texte, maintenez Fn, parlez puis relâchez. **Échap** annule pendant l’enregistrement. Les raccourcis Fn combinés avec d’autres touches annulent la dictée. Les champs protégés et les applications qui n’exposent pas un champ texte accessible utilisent le bouton Copier.
 
@@ -60,6 +71,13 @@ SwiftUI + AppKit
 ```
 
 `VeloceCore` contient le contrat de transport et les types. `Engine/` est réutilisable sans l’interface macOS. Voir [le protocole du moteur](Engine/README.md), [le choix des modèles](docs/research-asr.md) et [les alternatives existantes](docs/alternatives.md).
+
+Pour vérifier le design pendant qu’une autre version tourne, construisez un bundle distinct et rendez ses vues hors écran. Cette commande ne démarre ni microphone, ni raccourci global, ni moteur de transcription :
+
+```sh
+VELOCE_APP_OUTPUT="$PWD/build/design-preview/Veloce.app" bash scripts/build-app.sh
+build/design-preview/Veloce.app/Contents/MacOS/Veloce --render-design build/design-preview/renders
+```
 
 ## Vérifier et faire évoluer les modèles
 
