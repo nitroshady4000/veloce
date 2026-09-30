@@ -25,11 +25,15 @@ public struct MeetingRecord: Codable, Identifiable, Sendable {
     public var notes: String
     public var diarization: String
     public var model: SpeechModel?
+    /// Absent in recordings and older saved meetings. Only the filename is kept,
+    /// never a reference to an external file that could move or be deleted.
+    public var originalFilename: String?
+    public var isImported: Bool { originalFilename != nil }
 
     public init(title: String, date: Date = Date()) {
         id = UUID(); self.title = title; self.date = date
         duration = 0; status = .recording; segments = []; speakerNames = [:]
-        notes = ""; diarization = "sources"; model = nil
+        notes = ""; diarization = "sources"; model = nil; originalFilename = nil
     }
 
     public func speakerName(_ segment: MeetingSegment) -> String {

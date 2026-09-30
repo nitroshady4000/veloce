@@ -106,6 +106,89 @@ class MeetingTests(unittest.TestCase):
         with self.assertRaisesRegex(EngineError, "Prepare first"):
             transcribe_meeting({**self.params, "diarize": True}, None, lambda _: None, missing)
 
+    def test_import_uses_neutral_provenance_without_creating_tracks(self):
+        imported = self.directory / "imported.wav"
+        wav(imported, [(2, 0), (1, 400), (2, 0)])
+        original = imported.read_bytes()
+        calls = []
+
+        class Backend:
+            def transcribe(inner, path, language, context):
+                calls.append((language, context))
+                return {"text": "Voici l’enregistrement importé."}
+
+        result = transcribe_meeting({"audio_path": str(imported), "language": "French", "context": "Véloce"},
+                                    Backend(), lambda _: None)
+        self.assertEqual(calls, [("French", "Véloce")])
+        self.assertEqual(result["duration"], 5)
+        self.assertEqual(result["diarization"], "tracks-only")
+        self.assertEqual(len(result["segments"]), 1)
+        segment = result["segments"][0]
+        self.assertEqual((segment["source"], segment["speaker"]), ("imported", "Audio importé"))
+        self.assertTrue(segment["id"].startswith("imported-"))
+        self.assertAlmostEqual(segment["start"], 1.85, places=2)
+        self.assertIn("Audio importé", result["text"])
+        self.assertNotIn("Vous", result["text"])
+        self.assertEqual(imported.read_bytes(), original)
+        self.assertEqual(list(self.directory.iterdir()), [imported])
+
+    def test_import_diarizes_the_complete_file_and_preserves_imported_source(self):
+        imported = self.directory / "imported.wav"
+        wav(imported, [(1, 0), (6, 500)])
+        received = []
+
+        class Diarizer:
+            def segments(inner, path, duration, progress):
+                received.append((path, duration))
+                progress(1)
+                return [AudioSlice(1, 3, "Interlocuteur 1"), AudioSlice(4, 7, "Interlocuteur 2")]
+
+        class Backend:
+            def transcribe(inner, *args):
+                return {"text": "Passage importé"}
+
+        result = transcribe_meeting({"audio_path": str(imported), "diarize": True},
+                                    Backend(), lambda _: None, Diarizer)
+        self.assertEqual(received, [(imported.resolve(), 7)])
+        self.assertEqual(result["duration"], 7)
+        self.assertEqual(result["diarization"], "sherpa-onnx-pyannote-wespeaker")
+        self.assertEqual([item["speaker"] for item in result["segments"]], ["Interlocuteur 1", "Interlocuteur 2"])
+        self.assertTrue(all(item["source"] == "imported" for item in result["segments"]))
+        self.assertEqual(result["segments"][-1]["start"], 4)
+
+    def test_import_rejects_ambiguous_or_missing_source_selection(self):
+        # Reject the contract before trying to read any path, even if an extra
+        # track value is null. A client must select one clear source mode.
+        invalid = [
+            {"audio_path": "missing.wav", **self.params},
+            {"audio_path": "missing.wav", "microphone_path": None},
+            {"audio_path": "missing.wav", "system_path": None},
+            {"microphone_path": str(self.microphone)},
+            {"system_path": str(self.system)},
+            {},
+        ]
+        for params in invalid:
+            with self.subTest(params=params), self.assertRaises(EngineError) as caught:
+                transcribe_meeting(params, None, lambda _: None)
+            self.assertEqual(caught.exception.code, "invalid_request")
+
+    def test_import_retains_audio_validation_and_skips_silence(self):
+        imported = self.directory / "imported.wav"
+        with self.assertRaises(EngineError) as caught:
+            transcribe_meeting({"audio_path": str(imported)}, None, lambda _: None)
+        self.assertEqual(caught.exception.code, "audio_not_found")
+        wav(imported, [(2, 0)])
+        # A backend of None proves silent audio cannot reach inference.
+        result = transcribe_meeting({"audio_path": str(imported)}, None, lambda _: None)
+        self.assertEqual(result["segments"], [])
+        self.assertEqual(result["duration"], 2)
+        with wave.open(str(imported), "wb") as audio:
+            audio.setparams((2, 2, 16000, 0, "NONE", "not compressed"))
+            audio.writeframes(bytes(32000))
+        with self.assertRaises(EngineError) as caught:
+            transcribe_meeting({"audio_path": str(imported)}, None, lambda _: None)
+        self.assertEqual(caught.exception.code, "invalid_audio")
+
     def test_stereo_export_preserves_left_right_and_zero_pads_shorter_track(self):
         wav(self.microphone, [(1, 100)])
         wav(self.system, [(2, -200)])
@@ -120,6 +203,33 @@ class MeetingTests(unittest.TestCase):
             self.assertEqual(struct.unpack("<hh", audio.readframes(1)), (0, -200))
         with self.assertRaises(EngineError):
             export_meeting_audio({**self.params, "output_path": str(self.microphone)})
+
+    def test_import_export_preserves_mono_audio_and_refuses_overwrite(self):
+        imported = self.directory / "imported.wav"
+        destination = self.directory / "export.wav"
+        wav(imported, [(1, 600), (1, 0)])
+        original = imported.read_bytes()
+        params = {"audio_path": str(imported), "output_path": str(destination)}
+        result = export_meeting_audio(params)
+        self.assertEqual(result, {"path": str(destination.resolve()), "duration": 2, "channels": 1})
+        self.assertEqual(destination.read_bytes(), original)
+        self.assertEqual(imported.read_bytes(), original)
+        with wave.open(str(destination), "rb") as audio:
+            self.assertEqual((audio.getnchannels(), audio.getnframes()), (1, 32000))
+        for output in [destination, imported]:
+            with self.subTest(output=output), self.assertRaises(EngineError) as caught:
+                export_meeting_audio({**params, "output_path": str(output)})
+            self.assertEqual(caught.exception.code, "output_exists")
+            self.assertEqual(output.read_bytes(), original)
+        self.assertEqual(set(self.directory.iterdir()), {imported, destination})
+
+    def test_import_export_rejects_ambiguous_source_mode_before_writing(self):
+        destination = self.directory / "export.wav"
+        for key in ["microphone_path", "system_path"]:
+            with self.subTest(key=key), self.assertRaises(EngineError) as caught:
+                export_meeting_audio({"audio_path": "missing.wav", key: None, "output_path": str(destination)})
+            self.assertEqual(caught.exception.code, "invalid_request")
+        self.assertFalse(destination.exists())
 
     def test_truncated_track_rejected(self):
         wav(self.microphone, [(1, 500)])

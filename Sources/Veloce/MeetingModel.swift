@@ -3,7 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import VeloceCore
 
-enum MeetingPhase { case idle, starting, recording, stopping, processing, preparing, summarizing }
+enum MeetingPhase { case idle, starting, recording, stopping, importing, processing, preparing, summarizing }
 
 @MainActor
 final class MeetingModel: ObservableObject {
@@ -21,7 +21,11 @@ final class MeetingModel: ObservableObject {
     @Published var diarize = true
     @Published var draftTitle = ""
     @Published var transcribeAfterRecording = true
-    @Published private(set) var error: String?
+    @Published var transcribeAfterImport = true
+    @Published private(set) var error: String? {
+        didSet { showsCaptureSettings = false }
+    }
+    @Published private(set) var showsCaptureSettings = false
     var canBegin: (() -> Bool)?
     var onBusyChange: ((Bool) -> Void)?
     var onModelLoaded: ((SpeechModel) -> Void)?
@@ -95,7 +99,65 @@ final class MeetingModel: ObservableObject {
                 guard generation == token else { return }
                 update(record.id) { $0.status = .interrupted }
                 self.error = error.localizedDescription; status = "L’enregistrement n’a pas démarré."
+                showsCaptureSettings = true
                 phase = .idle; activeID = nil
+            }
+        }
+    }
+
+    func chooseAudioFile(model: SpeechModel, language: String, vocabulary: String) {
+        guard !isBusy, canBegin?() != false else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Importer un fichier audio"
+        panel.prompt = "Importer"
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Fn may have started while the panel was open.
+        guard !isBusy, canBegin?() != false else { return }
+        importAudioFile(url, model: model, language: language, vocabulary: vocabulary)
+    }
+
+    private func importAudioFile(_ url: URL, model: SpeechModel, language: String, vocabulary: String) {
+        error = nil; progress = 0; phase = .importing
+        status = "Import de \(url.lastPathComponent)…"
+        var record = MeetingRecord(title: url.deletingPathExtension().lastPathComponent)
+        record.originalFilename = url.lastPathComponent
+        let folder = store.directory(for: record.id)
+        let token = UUID(); generation = token
+        let shouldTranscribe = transcribeAfterImport
+        operation = Task { [self] in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            var createdFolder = false
+            do {
+                try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+                createdFolder = true
+                record.duration = try await MeetingAudioImporter.importFile(from: url,
+                    to: folder.appendingPathComponent("imported.wav")) { [weak self] value in
+                    Task { @MainActor in
+                        guard let self, self.generation == token, self.phase == .importing else { return }
+                        self.progress = value
+                    }
+                }
+                try Task.checkCancellation()
+                guard generation == token else { throw CancellationError() }
+                record.status = .recorded
+                try store.save(record)
+                records.insert(record, at: 0); selectedID = record.id
+                progress = 1; phase = .idle; status = "Le fichier audio est prêt."
+                if shouldTranscribe, !shuttingDown {
+                    transcribeMeeting(record.id, model: model, language: language, vocabulary: vocabulary)
+                }
+            } catch {
+                // Only this operation's new directory is disposable. The source
+                // and all existing meetings are untouched, including on cancel.
+                if createdFolder { try? FileManager.default.removeItem(at: folder) }
+                guard generation == token, !Task.isCancelled else { return }
+                self.error = error.localizedDescription
+                phase = .idle; status = "Le fichier n’a pas pu être importé."
             }
         }
     }
@@ -148,7 +210,7 @@ final class MeetingModel: ObservableObject {
     }
 
     func transcribeMeeting(_ id: UUID, model: SpeechModel, language: String, vocabulary: String) {
-        guard !isBusy, canBegin?() != false, records.contains(where: { $0.id == id }) else { return }
+        guard !isBusy, canBegin?() != false, let record = records.first(where: { $0.id == id }) else { return }
         error = nil; progress = 0; phase = .processing; selectedID = id
         status = "Chargement du modèle de transcription…"
         let token = UUID(); generation = token
@@ -164,9 +226,13 @@ final class MeetingModel: ObservableObject {
                 guard generation == token, !Task.isCancelled else { return }
                 onModelLoaded?(model)
                 let folder = store.directory(for: id)
-                var params: [String: Any] = ["microphone_path": folder.appendingPathComponent("microphone.wav").path,
-                    "system_path": folder.appendingPathComponent("system.wav").path,
-                    "model": model.rawValue, "context": vocabulary, "diarize": useDiarization]
+                var params: [String: Any] = ["model": model.rawValue, "context": vocabulary, "diarize": useDiarization]
+                if record.isImported {
+                    params["audio_path"] = folder.appendingPathComponent("imported.wav").path
+                } else {
+                    params["microphone_path"] = folder.appendingPathComponent("microphone.wav").path
+                    params["system_path"] = folder.appendingPathComponent("system.wav").path
+                }
                 if language != "Auto" { params["language"] = language }
                 let result = try await engine.request("transcribe_meeting", params: params, timeout: 24 * 3600)
                 guard generation == token, !Task.isCancelled else { return }
@@ -197,15 +263,17 @@ final class MeetingModel: ObservableObject {
     }
 
     func cancelProcessing() {
-        guard phase == .processing || phase == .preparing || phase == .summarizing else { return }
+        guard [.processing, .preparing, .summarizing, .importing].contains(phase) else { return }
+        let wasImporting = phase == .importing
         let token = UUID(); generation = token
         let pending = operation; pending?.cancel()
-        if phase != .summarizing { engine.stop() }
+        if phase != .summarizing && !wasImporting { engine.stop() }
         phase = .stopping; status = "Arrêt du traitement…"
         operation = Task {
             await pending?.value
             guard generation == token else { return }
-            phase = .idle; status = "Traitement arrêté. L’enregistrement reste disponible."
+            phase = .idle
+            status = wasImporting ? "Import annulé. Le fichier d’origine est intact." : "Traitement arrêté. L’enregistrement reste disponible."
         }
     }
 
@@ -229,7 +297,7 @@ final class MeetingModel: ObservableObject {
     }
     func revealFiles() { if let selectedID { NSWorkspace.shared.open(store.directory(for: selectedID)) } }
     func playTrack(_ name: String) {
-        guard let selectedID, ["microphone.wav", "system.wav"].contains(name) else { return }
+        guard let selectedID, ["microphone.wav", "system.wav", "imported.wav"].contains(name) else { return }
         NSWorkspace.shared.open(store.directory(for: selectedID).appendingPathComponent(name))
     }
     func copyTranscript() {
@@ -263,20 +331,24 @@ final class MeetingModel: ObservableObject {
     func exportStereo() {
         guard !isBusy, canBegin?() != false, let record = selected else { return }
         let panel = NSSavePanel(); panel.allowedContentTypes = [.wav]
-        panel.nameFieldStringValue = "Reunion-stereo.wav"
+        panel.nameFieldStringValue = record.isImported ? "Audio-importe.wav" : "Reunion-stereo.wav"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         guard !isBusy, canBegin?() != false else { return }
-        error = nil; phase = .processing; status = "Export stéréo : micro à gauche, réunion à droite…"
+        error = nil; progress = 0; phase = .processing
+        status = record.isImported ? "Export de l’audio importé…" : "Export stéréo : micro à gauche, réunion à droite…"
         let token = UUID(); generation = token
         let folder = store.directory(for: record.id)
         operation = Task {
             do {
-                _ = try await engine.request("export_meeting_audio", params: [
-                    "microphone_path": folder.appendingPathComponent("microphone.wav").path,
-                    "system_path": folder.appendingPathComponent("system.wav").path, "output_path": url.path
-                ], timeout: 600)
+                var params: [String: Any] = ["output_path": url.path]
+                if record.isImported { params["audio_path"] = folder.appendingPathComponent("imported.wav").path }
+                else {
+                    params["microphone_path"] = folder.appendingPathComponent("microphone.wav").path
+                    params["system_path"] = folder.appendingPathComponent("system.wav").path
+                }
+                _ = try await engine.request("export_meeting_audio", params: params, timeout: 600)
                 guard generation == token, !Task.isCancelled else { return }
-                phase = .idle; status = "Les pistes stéréo sont exportées."
+                phase = .idle; status = "L’audio est exporté."
             } catch { finishError(error, token: token) }
         }
     }

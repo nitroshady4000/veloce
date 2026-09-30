@@ -11,7 +11,8 @@ struct MeetingsView: View {
                            modelName: app.selectedModel.name,
                            start: { meetings.startRecording(model: app.selectedModel, language: app.language, vocabulary: app.vocabulary) },
                            transcribe: { id in meetings.transcribeMeeting(id, model: app.selectedModel, language: app.language, vocabulary: app.vocabulary) },
-                           prepare: { meetings.prepareDiarization(model: app.selectedModel) })
+                           prepare: { meetings.prepareDiarization(model: app.selectedModel) },
+                           importAudio: { meetings.chooseAudioFile(model: app.selectedModel, language: app.language, vocabulary: app.vocabulary) })
             .onAppear { meetings.refreshAvailability() }
     }
 }
@@ -23,6 +24,7 @@ struct MeetingPageContent: View {
     let start: () -> Void
     let transcribe: (UUID) -> Void
     let prepare: () -> Void
+    var importAudio: () -> Void = {}
     @State private var confirmDelete = false
     @State private var confirmReplaceNotes = false
     @State private var editedSpeaker: String?
@@ -38,7 +40,7 @@ struct MeetingPageContent: View {
                 SectionEyebrow(text: "Les réunions, à votre rythme")
                 Text("Écoutez. On garde le fil.")
                     .font(.system(size: 34, weight: .medium, design: .rounded)).tracking(-1)
-                Text("Votre voix et celle de la réunion, sur deux pistes séparées. Transcrivez-les ensuite sur ce Mac.")
+                Text("Enregistrez votre réunion sur deux pistes, ou importez un fichier audio. La transcription reste sur ce Mac.")
                     .font(.system(size: 13)).foregroundStyle(VeloceTheme.secondary).lineSpacing(4)
             }
 
@@ -80,6 +82,19 @@ struct MeetingPageContent: View {
                     if #unavailable(macOS 15.0) {
                         Text("La capture de réunion nécessite macOS 15 ou plus récent.").font(.system(size: 11)).foregroundStyle(VeloceTheme.error)
                     }
+                    Divider().overlay(VeloceTheme.secondary.opacity(0.15))
+                    HStack {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Vous avez déjà l’enregistrement ?").font(.system(size: 12, weight: .medium))
+                            Toggle("Transcrire après l’import", isOn: $meetings.transcribeAfterImport)
+                                .toggleStyle(.checkbox).font(.system(size: 11)).disabled(blocked)
+                        }
+                        Spacer()
+                        Button(action: importAudio) { Label("Importer un audio…", systemImage: "square.and.arrow.down") }
+                            .buttonStyle(VeloceButtonStyle(prominent: false)).disabled(blocked)
+                    }
+                    Text("Jusqu’à 4 h. Une copie audio est conservée dans Véloce ; le fichier d’origine reste intact. Les canaux sont réunis pour la transcription.")
+                        .font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary).lineSpacing(3)
                 }
             }
 
@@ -89,12 +104,12 @@ struct MeetingPageContent: View {
                         Image(systemName: "person.2.wave.2").foregroundStyle(VeloceTheme.amber)
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Qui a dit quoi ?").font(.system(size: 13, weight: .semibold))
-                            Text(meetings.diarizationReady ? "Le modèle local distingue les voix distantes. Vous pourrez leur donner un nom après la transcription." : "Les pistes distinguent déjà vous et la réunion. Préparez la détection locale pour séparer les différentes voix distantes.")
+                            Text(meetings.diarizationReady ? "Le modèle local distingue les voix de la réunion ou du fichier importé. Vous pourrez leur donner un nom après la transcription." : "Préparez la détection locale pour distinguer les différentes voix de la réunion ou d’un fichier importé.")
                                 .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary).lineSpacing(3)
                         }
                     }
                     if meetings.diarizationReady {
-                        Toggle("Distinguer les interlocuteurs distants", isOn: $meetings.diarize)
+                        Toggle("Distinguer les interlocuteurs", isOn: $meetings.diarize)
                             .toggleStyle(.switch).tint(VeloceTheme.green).font(.system(size: 12)).disabled(blocked)
                     } else {
                         Button("Préparer la détection des voix", action: prepare)
@@ -110,18 +125,20 @@ struct MeetingPageContent: View {
                     if meetings.isBusy && meetings.phase != .recording { ProgressView().controlSize(.small) }
                     Text(meetings.status).font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
                     Spacer()
-                    if [.processing, .preparing, .summarizing].contains(meetings.phase) {
+                    if [.processing, .preparing, .summarizing, .importing].contains(meetings.phase) {
                         Button("Arrêter le traitement", action: meetings.cancelProcessing).font(.system(size: 11))
                     }
                 }
-                if meetings.phase == .processing || meetings.phase == .summarizing {
+                if [.processing, .summarizing, .importing].contains(meetings.phase) {
                     ProgressView(value: meetings.progress).tint(VeloceTheme.amber)
                 }
                 if let error = meetings.error {
                     Text(error).font(.system(size: 12)).foregroundStyle(VeloceTheme.error).textSelection(.enabled)
-                    Button("Ouvrir les autorisations de capture") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
-                    }.font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(VeloceTheme.accent)
+                    if meetings.showsCaptureSettings {
+                        Button("Ouvrir les autorisations de capture") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+                        }.font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(VeloceTheme.accent)
+                    }
                 }
             }
 
@@ -140,7 +157,7 @@ struct MeetingPageContent: View {
             Text("macOS peut nommer l’autorisation « Enregistrement de l’écran et audio système ». Véloce ne conserve aucune image. Les sons des autres apps sont capturés : coupez les notifications pendant la réunion.")
                 .font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary).lineSpacing(3)
         }
-        .confirmationDialog("Supprimer cette réunion et ses deux pistes audio ?", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .confirmationDialog("Supprimer cette réunion et l’audio conservé dans Véloce ?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Supprimer la réunion", role: .destructive, action: meetings.deleteSelected)
             Button("Annuler", role: .cancel) {}
         }
@@ -179,15 +196,23 @@ struct MeetingPageContent: View {
                     Text(record.title).font(.system(size: 20, weight: .medium, design: .rounded))
                     Text("\(record.date.formatted(date: .abbreviated, time: .shortened)) · \(MeetingRecord.timestamp(record.duration))")
                         .font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary)
+                    if let filename = record.originalFilename {
+                        Label(filename, systemImage: "waveform").font(.system(size: 10))
+                            .foregroundStyle(VeloceTheme.secondary).lineLimit(2)
+                    }
                 }
                 Spacer()
                 Menu {
                     Button("Renommer") { newTitle = record.title; renameTitle = true }
-                    Button("Écouter le microphone") { meetings.playTrack("microphone.wav") }
-                    Button("Écouter l’audio système") { meetings.playTrack("system.wav") }
+                    if record.isImported {
+                        Button("Écouter l’audio importé") { meetings.playTrack("imported.wav") }
+                    } else {
+                        Button("Écouter le microphone") { meetings.playTrack("microphone.wav") }
+                        Button("Écouter l’audio système") { meetings.playTrack("system.wav") }
+                    }
                     Button("Afficher les fichiers", action: meetings.revealFiles)
                     Divider()
-                    Button("Exporter en stéréo WAV…", action: meetings.exportStereo)
+                    Button(record.isImported ? "Exporter l’audio WAV…" : "Exporter en stéréo WAV…", action: meetings.exportStereo)
                     Button("Exporter Markdown…") { meetings.export("md") }
                     Button("Exporter les sous-titres SRT…") { meetings.export("srt") }
                     Button("Exporter JSON…") { meetings.export("json") }
@@ -227,7 +252,7 @@ struct MeetingPageContent: View {
                         }
                     }
                 }
-                Text(record.diarization.hasPrefix("sherpa-") ? "Voix détectées automatiquement · cliquez sur un nom pour le corriger" : "Repères par source · Vous / Participants")
+                Text(record.diarization.hasPrefix("sherpa-") ? "Voix détectées automatiquement · cliquez sur un nom pour le corriger" : record.isImported ? "Audio importé · les interlocuteurs ne sont pas séparés" : "Repères par source · Vous / Participants")
                     .font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary)
                 LazyVStack(alignment: .leading, spacing: 17) {
                     ForEach(record.segments) { segment in

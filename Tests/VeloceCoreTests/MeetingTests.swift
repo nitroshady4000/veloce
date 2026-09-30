@@ -2,6 +2,21 @@ import XCTest
 @testable import VeloceCore
 
 final class MeetingTests: XCTestCase {
+    func testOlderSavedMeetingsRemainRecordingsAndImportKeepsProvenance() throws {
+        let record = MeetingRecord(title: "Ancienne réunion")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+        json.removeValue(forKey: "originalFilename")
+        let legacy = try JSONDecoder().decode(MeetingRecord.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertFalse(legacy.isImported)
+        var imported = legacy
+        imported.originalFilename = "Entretien.m4a"
+        imported.status = .recorded
+        let restored = try JSONDecoder().decode(MeetingRecord.self, from: JSONEncoder().encode(imported))
+        XCTAssertTrue(restored.isImported)
+        XCTAssertEqual(restored.originalFilename, "Entretien.m4a")
+        XCTAssertEqual(restored.status, .recorded)
+    }
+
     func testExportsPreserveSpeakersOverlapAndHourBoundary() throws {
         var record = MeetingRecord(title: "Planning")
         record.duration = 3601

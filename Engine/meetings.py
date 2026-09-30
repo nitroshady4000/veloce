@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 import wave
@@ -309,10 +310,28 @@ class SherpaDiarizer:
         return merged
 
 
+def _uses_imported_audio(params) -> bool:
+    imported = "audio_path" in params
+    track_keys = ("microphone_path", "system_path")
+    if imported and any(key in params for key in track_keys):
+        raise EngineError("invalid_request", "Choose audio_path or microphone_path with system_path, never both.")
+    if not imported and not all(key in params for key in track_keys):
+        raise EngineError("invalid_request", "Provide audio_path or both microphone_path and system_path.")
+    return imported
+
+
 def transcribe_meeting(params, backend, emit, diarizer_factory=SherpaDiarizer) -> dict:
-    microphone, mic_duration = validate_track(params.get("microphone_path"))
-    system, system_duration = validate_track(params.get("system_path"))
-    duration = max(mic_duration, system_duration)
+    imported = _uses_imported_audio(params)
+    microphone = None
+    if imported:
+        primary, primary_duration = validate_track(params["audio_path"])
+        duration = primary_duration
+        primary_source, primary_label = "imported", "Audio importé"
+    else:
+        microphone, mic_duration = validate_track(params["microphone_path"])
+        primary, primary_duration = validate_track(params["system_path"])
+        duration = max(mic_duration, primary_duration)
+        primary_source, primary_label = "system", "Participants"
     diarize = params.get("diarize", False)
     if not isinstance(diarize, bool):
         raise EngineError("invalid_request", "diarize must be a boolean.")
@@ -321,19 +340,21 @@ def transcribe_meeting(params, backend, emit, diarizer_factory=SherpaDiarizer) -
         raise EngineError("invalid_request", "context must be a string of at most 4000 characters.")
     if language is not None and (not isinstance(language, str) or len(language) > 64):
         raise EngineError("invalid_request", "language must be a language name or null.")
-    emit({"event": "meeting_progress", "progress": 0.0, "detail": "Analyse des pistes audio"})
-    system_slices = []
+    emit({"event": "meeting_progress", "progress": 0.0,
+          "detail": "Analyse du fichier audio" if imported else "Analyse des pistes audio"})
+    primary_slices = []
     if diarize:
         diarizer = diarizer_factory()
-        turns = diarizer.segments(system, system_duration, lambda value: emit({
+        turns = diarizer.segments(primary, primary_duration, lambda value: emit({
             "event": "meeting_progress", "progress": value * .25, "detail": "Détection des interlocuteurs"}))
         for turn in turns:
-            system_slices.extend(speech_chunks(system, turn.speaker, turn.start, turn.end))
+            primary_slices.extend(speech_chunks(primary, turn.speaker, turn.start, turn.end))
         del diarizer
     else:
-        system_slices = speech_chunks(system, "Participants")
-    jobs = [(microphone, "microphone", item) for item in speech_chunks(microphone, "Vous")]
-    jobs.extend((system, "system", item) for item in system_slices)
+        primary_slices = speech_chunks(primary, primary_label)
+    jobs = [(primary, primary_source, item) for item in primary_slices]
+    if microphone is not None:
+        jobs.extend((microphone, "microphone", item) for item in speech_chunks(microphone, "Vous"))
     jobs.sort(key=lambda job: (job[2].start, job[1]))
     total_work = sum(item.end - item.start for _, _, item in jobs)
     processed = 0
@@ -361,8 +382,14 @@ def transcribe_meeting(params, backend, emit, diarizer_factory=SherpaDiarizer) -
 
 
 def export_meeting_audio(params) -> dict:
-    microphone, mic_duration = validate_track(params.get("microphone_path"))
-    system, system_duration = validate_track(params.get("system_path"))
+    imported = _uses_imported_audio(params)
+    if imported:
+        source, duration = validate_track(params["audio_path"])
+        channels = 1
+    else:
+        microphone, mic_duration = validate_track(params["microphone_path"])
+        system, system_duration = validate_track(params["system_path"])
+        duration, channels = max(mic_duration, system_duration), 2
     value = params.get("output_path")
     if not isinstance(value, str) or not value:
         raise EngineError("invalid_request", "output_path must be a local WAV path.")
@@ -376,20 +403,24 @@ def export_meeting_audio(params) -> dict:
         descriptor, name = tempfile.mkstemp(prefix=".veloce-export-", suffix=".wav", dir=destination.parent)
         os.close(descriptor)
         temporary = Path(name)
-        with wave.open(str(microphone), "rb") as left, wave.open(str(system), "rb") as right, wave.open(str(temporary), "wb") as out:
-            out.setparams((2, 2, RATE, 0, "NONE", "not compressed"))
-            while True:
-                a, b = _samples(left.readframes(16000)), _samples(right.readframes(16000))
-                size = max(len(a), len(b))
-                if not size:
-                    break
-                a.extend([0] * (size - len(a)))
-                b.extend([0] * (size - len(b)))
-                interleaved = array("h", [0]) * (size * 2)
-                interleaved[0::2], interleaved[1::2] = a, b
-                if sys.byteorder != "little":
-                    interleaved.byteswap()
-                out.writeframesraw(interleaved.tobytes())
+        if imported:
+            with source.open("rb") as audio, temporary.open("wb") as out:
+                shutil.copyfileobj(audio, out, length=1024 * 1024)
+        else:
+            with wave.open(str(microphone), "rb") as left, wave.open(str(system), "rb") as right, wave.open(str(temporary), "wb") as out:
+                out.setparams((2, 2, RATE, 0, "NONE", "not compressed"))
+                while True:
+                    a, b = _samples(left.readframes(16000)), _samples(right.readframes(16000))
+                    size = max(len(a), len(b))
+                    if not size:
+                        break
+                    a.extend([0] * (size - len(a)))
+                    b.extend([0] * (size - len(b)))
+                    interleaved = array("h", [0]) * (size * 2)
+                    interleaved[0::2], interleaved[1::2] = a, b
+                    if sys.byteorder != "little":
+                        interleaved.byteswap()
+                    out.writeframesraw(interleaved.tobytes())
         # Atomic publication without overwriting a file created during export.
         os.link(temporary, destination)
     except FileExistsError as error:
@@ -397,4 +428,4 @@ def export_meeting_audio(params) -> dict:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return {"path": str(destination), "duration": max(mic_duration, system_duration), "channels": 2}
+    return {"path": str(destination), "duration": duration, "channels": channels}

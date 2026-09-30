@@ -8,7 +8,17 @@ import VeloceCore
 struct VeloceMain {
     @MainActor static func main() {
         let args = CommandLine.arguments
-        if let index = args.firstIndex(of: "--verify-meeting-audio"), args.indices.contains(index + 1) {
+        if let index = args.firstIndex(of: "--verify-audio-import"), args.indices.contains(index + 1) {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            Task {
+                do {
+                    try await MeetingAudioImporter.verifyImport(directory: URL(fileURLWithPath: args[index + 1]))
+                    print("Audio file import verified"); exit(0)
+                } catch { fputs("Audio import check: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+            NSApp.run()
+        } else if let index = args.firstIndex(of: "--verify-meeting-audio"), args.indices.contains(index + 1) {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)
             Task {

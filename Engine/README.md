@@ -51,15 +51,23 @@ or rewrites these source files. Meeting capture and storage belong to the client
 {"id":"5","method":"prepare_diarization"}
 {"id":"6","method":"transcribe_meeting","params":{"microphone_path":"/local/microphone.wav","system_path":"/local/system.wav","model":"qwen3-0.6b","language":"French","context":"Véloce Famulus","diarize":true}}
 {"id":"7","method":"export_meeting_audio","params":{"microphone_path":"/local/microphone.wav","system_path":"/local/system.wav","output_path":"/local/meeting-stereo.wav"}}
+{"id":"8","method":"transcribe_meeting","params":{"audio_path":"/local/imported.wav","model":"qwen3-0.6b","language":"French","diarize":true}}
 ```
 
 `transcribe_meeting` requires the selected ASR model already loaded. It returns
 `{text, segments, duration, diarization}`. Each segment has `id`, `start` and `end`
-(seconds from recording start), `speaker`, `source` (`microphone` or `system`),
+(seconds from recording start), `speaker`, `source` (`microphone`, `system` or `imported`),
 and `text`. Timestamps describe audio passages, not word alignment. Progress uses
 `{event:"meeting_progress", progress:0.0, detail:"…"}` through 1.0. Cancellation
 uses the existing worker termination mechanism; source audio remains available
 for retry. Temporary ASR chunks are managed by a private temporary directory.
+
+For an imported file, pass `audio_path` instead of the two capture paths. Mixing
+the two forms is rejected. The client decodes/downmixes the source into mono
+16 kHz PCM16 WAV first; the engine does not require FFmpeg. Imported segments
+keep `source:"imported"`, with the neutral label **Audio importé** when diarization
+is disabled. When enabled, diarization covers the entire imported file. No fake
+microphone track is created and no imported voice is assumed to be the user.
 
 With `diarize:false`, labels are **Vous** and **Participants**; the result says
 `diarization:"tracks-only"`. This is track separation, not speaker detection.
@@ -93,6 +101,9 @@ It has not yet been evaluated on a representative French meeting corpus.
 It zero-pads the shorter track and returns `{path,duration,channels:2}`. Export
 publishes atomically and refuses to overwrite existing files or source tracks.
 The two original mono files remain available for editing in an audio workstation.
+For imports, the same operation accepts `{audio_path, output_path}` instead of
+the two track paths and exports the mono WAV unchanged (`channels:1`). It streams
+the file and applies the same no-overwrite rule.
 
 Speaker model provenance (immutable revisions and hashes are in `meetings.py`):
 

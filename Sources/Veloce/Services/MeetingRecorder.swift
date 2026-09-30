@@ -195,8 +195,9 @@ final class MeetingRecorder {
         stereo.reserveCapacity(count * 2)
         for frame in 0..<count {
             let tone = Float(sin(2 * Double.pi * 800 * Double(frame) / 48_000))
+            // A right-only voice must survive the production mono downmix.
+            stereo.append(0)
             stereo.append(tone * 0.4)
-            stereo.append(tone * 0.2)
         }
         var block: CMBlockBuffer?
         let byteCount = stereo.count * MemoryLayout<Float>.size
@@ -391,6 +392,7 @@ private final class MeetingAudioTrack {
         guard copied == noErr else { throw MeetingRecorder.CaptureError.invalidAudio }
         if inputFormat != format {
             converter = AVAudioConverter(from: format, to: outputFormat)
+            converter?.downmix = true
             converter?.primeMethod = .none
             inputFormat = format
         }
