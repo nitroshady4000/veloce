@@ -60,6 +60,15 @@ struct RecordingHUDView: View {
             case .failed: "Ouvrez Véloce pour réessayer"
             }
         }
+        if model.isRecording, model.livePreview.isEmpty {
+            switch model.livePreviewState {
+            case .preparing: return "Préparation du texte en direct…"
+            case .downloading: return "Installation du texte en direct…"
+            case .needsAuthorization, .permissionDenied: return "Texte en direct à activer dans les réglages"
+            case .unavailable: return "Sans aperçu · Relâchez Fn pour insérer"
+            case .idle, .ready: break
+            }
+        }
         if model.isRecording, model.pendingDictationCount > 0 {
             let finish = model.isHandsFree ? "Fn pour terminer" : "Relâchez fn"
             return "\(finish) · \(model.pendingDictationCount) en cours"

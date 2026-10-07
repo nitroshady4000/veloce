@@ -8,7 +8,21 @@ import VeloceCore
 struct VeloceMain {
     @MainActor static func main() {
         let args = CommandLine.arguments
-        if args.contains("--verify-text-insertion") {
+        if let index = args.firstIndex(of: "--verify-live-preview"), args.indices.contains(index + 1) {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            Task {
+                do {
+                    try await LivePreviewDiagnostics.verify(fileURL: URL(fileURLWithPath: args[index + 1]))
+                    print("Progressive on-device French preview verified"); exit(0)
+                } catch { fputs("Live preview check: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 180_000_000_000)
+                fputs("Live preview check timed out\n", stderr); exit(1)
+            }
+            NSApp.run()
+        } else if args.contains("--verify-text-insertion") {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)
             do {

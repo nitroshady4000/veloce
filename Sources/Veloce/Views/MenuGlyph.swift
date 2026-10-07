@@ -80,7 +80,7 @@ final class MenuGlyphAnimator: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         let delta = min(0.1, max(0, now - lastTime))
         lastTime = now
-        let tau = targetLevel > envelope ? 0.035 : 0.17
+        let tau = targetLevel > envelope ? 0.035 : 0.13
         envelope = reduceMotion ? targetLevel : envelope + (targetLevel - envelope) * (1 - exp(-delta / tau))
         if !reduceMotion { animationTime += delta }
         image = MenuGlyphDrawing.image(phase: phase, level: envelope, time: animationTime)

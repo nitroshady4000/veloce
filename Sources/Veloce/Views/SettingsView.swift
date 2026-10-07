@@ -141,6 +141,33 @@ struct SettingsView: View {
                             }
                             .labelsHidden().frame(width: 150)
                         }
+                        if model.presentationMode == .pill {
+                            Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
+                            HStack(alignment: .center, spacing: 14) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("Texte en direct").font(.system(size: 13, weight: .medium))
+                                    Text(livePreviewDescription)
+                                        .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                switch model.livePreviewState {
+                                case .preparing, .downloading:
+                                    ProgressView().controlSize(.small)
+                                case .needsAuthorization:
+                                    Button("Autoriser", action: model.prepareLivePreview)
+                                        .buttonStyle(VeloceButtonStyle(prominent: false))
+                                case .permissionDenied:
+                                    Button("Réglages macOS", action: model.prepareLivePreview)
+                                        .buttonStyle(VeloceButtonStyle(prominent: false))
+                                case .unavailable, .idle:
+                                    Button("Réessayer", action: model.prepareLivePreview)
+                                        .buttonStyle(VeloceButtonStyle(prominent: false))
+                                        .disabled(model.isRecording)
+                                case .ready:
+                                    Image(systemName: "checkmark.circle").foregroundStyle(VeloceTheme.green)
+                                }
+                            }
+                        }
                         Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
@@ -257,7 +284,7 @@ struct SettingsView: View {
                 Image(systemName: "keyboard")
                     .font(.system(size: 17, weight: .light))
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("La touche Fn, rien de plus.")
+                    Text("Raccourci Fn")
                         .font(.system(size: 12, weight: .medium))
                     Text("Si macOS ouvre les emoji ou sa dictée avec Fn, choisissez « Ne rien faire » pour cette touche dans Réglages Système → Clavier.")
                         .font(.system(size: 11))
@@ -268,13 +295,28 @@ struct SettingsView: View {
             .foregroundStyle(VeloceTheme.secondary)
             .padding(.top, 3)
         }
-        .onAppear { login.refresh() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in login.refresh() }
+        .onAppear { login.refresh(); model.refreshLivePreviewAuthorization() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            login.refresh()
+            model.refreshLivePreviewAuthorization()
+        }
         .confirmationDialog("Effacer toutes les dictées enregistrées ?", isPresented: $confirmClearHistory, titleVisibility: .visible) {
             Button("Effacer l’historique", role: .destructive, action: model.clearHistory)
             Button("Annuler", role: .cancel) { }
         } message: {
             Text("Cette action supprime les textes conservés dans Véloce sur ce Mac.")
+        }
+    }
+
+    private var livePreviewDescription: String {
+        switch model.livePreviewState {
+        case .idle: "Les mots s’affichent dans la pill pendant la dictée."
+        case .preparing: "Préparation du texte en direct…"
+        case .downloading: "Installation du modèle Apple sur ce Mac…"
+        case .ready: "Les mots apparaissent pendant la dictée. Reconnaissance sur ce Mac."
+        case .needsAuthorization: "Autorisez la reconnaissance vocale pour afficher les mots en direct."
+        case .permissionDenied: "Activez Véloce dans Confidentialité et sécurité → Reconnaissance vocale."
+        case .unavailable(let reason): reason
         }
     }
 

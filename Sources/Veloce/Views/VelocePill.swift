@@ -15,18 +15,19 @@ enum PillPhase: Int, CaseIterable {
     }
 }
 
-/// The microphone meter is intentionally quiet at its lower end. Amplify only
-/// its presentation so normal speech lights up the pill without changing audio.
+/// Shape the microphone meter for the pill and menu glyph only. The recorder's
+/// audio and its level remain untouched; a soft curve gives quieter speech
+/// room to register while keeping louder speech in range.
 enum PillVoiceResponse {
     static func amplitude(_ level: Double) -> Double {
-        let normalized = min(1, max(0, (level - 0.08) / 0.92))
-        return min(1, sqrt(normalized) * 1.4)
+        min(0.96, meter(level) * 1.12)
     }
 
-    /// The pill's light reads Famulus' scale, (dB + 55) / 45 on the RMS level;
-    /// the recorder reports (dB + 55) / 55. No curve: syllables keep their contrast.
+    /// The recorder reports a 0...1 level. Lift its quiet end gently, with a
+    /// small floor to keep room noise from keeping the light alive.
     static func meter(_ level: Double) -> Double {
-        min(1, max(0, level * 55 / 45))
+        let normalized = min(1, max(0, (level - 0.025) / 0.975))
+        return pow(normalized, 0.68)
     }
 }
 

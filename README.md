@@ -8,12 +8,12 @@ Une petite app de dictée pour macOS et Apple Silicon. Maintenez **Fn**, parlez,
 
 Véloce est une app de dictée et de réunions pour macOS et Apple Silicon. La reconnaissance vocale tourne localement avec MLX ; aucun compte ni service cloud de transcription. Le téléchargement initial des modèles et dépendances nécessite Internet.
 
-La version de développement 0.2.2 intègre :
+La version de développement 0.2.4 intègre :
 
-- Dictée Fn avec Qwen3-ASR 0.6B par défaut ; le profil 1.7B et Parakeet TDT v3 sont aussi disponibles. Un seul modèle ASR tourne à la fois. Le double Fn active le mode mains libres.
+- Dictée Fn avec Qwen3-ASR 0.6B par défaut ; le profil 1.7B et Parakeet TDT v3 sont aussi disponibles. Un seul modèle de transcription finale tourne à la fois. Le double Fn active le mode mains libres.
 - Capture de la dictée suivante pendant le traitement, avec file FIFO bornée à quatre dictées, un seul ASR, puis collage dans l’ordre. Échap annule la capture en cours et laisse le traitement actif continuer. Fn ne lance pas de nouvelle dictée pendant une réunion.
 - Texte brut conservé, nettoyage Apple Intelligence facultatif, snippets et réécriture ou traduction vocale d’une sélection avec prévisualisation.
-- Pill simple sans V, ou glyphe animé dans la barre de menus.
+- Pill sans mascotte, mots progressifs et lumière réactive à la voix, ou glyphe animé dans la barre de menus. Fn pendant le chargement affiche l’état de préchauffe.
 - Réunions à deux pistes, import avec file audio et MP4/MOV/M4V, relecture par segment, corrections du texte, renommage/fusion/réattribution des interlocuteurs, recherche locale et exports TXT/VTT.
 - Service Finder accessible par clic droit → Services → Transcrire dans Véloce. Il crée à côté du média un `.txt` ou `.md` portant la même base de nom, sans écraser un fichier existant, et ajoute la transcription à l’historique.
 - Transcription en direct facultative, avec mise à jour environ toutes les 30 secondes sur un worker Qwen 0.6B ; calendrier et rappels facultatifs, ainsi que questions de recherche lexicale locale avec Apple Intelligence et passages de référence.
@@ -29,6 +29,8 @@ Installez `Veloce.app` dans `/Applications`. Dans **Réglages → Application**,
 Le réglage **Ouvrir Véloce au démarrage du Mac** utilise les éléments d’ouverture natifs de macOS. macOS peut demander une confirmation dans ses réglages.
 
 Les modèles et l’historique restent en dehors de l’application et sont conservés pendant les mises à jour. Pour publier la version suivante, voir [RELEASING.md](docs/RELEASING.md).
+
+Le **texte en direct** de la pill utilise la reconnaissance Apple sur ce Mac. Sous macOS 26+, son modèle est préparé au démarrage et installé si nécessaire, sans demander l’ancienne autorisation de reconnaissance vocale. Sur les systèmes plus anciens, celle-ci reste nécessaire pour le moteur Apple local. L’état et les actions de dépannage se trouvent dans **Réglages → Texte en direct**. Le texte collé provient toujours du modèle choisi dans Véloce.
 
 ## Compiler
 
@@ -120,6 +122,16 @@ build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-audio /tmp/veloce-audio-
 build/Veloce.app/Contents/MacOS/Veloce --verify-audio-import /tmp/veloce-import-check
 build/Veloce.app/Contents/MacOS/Veloce --verify-finder-service /tmp/veloce-finder-check
 build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-workflows /tmp/veloce-workflow-check
+```
+
+Sur macOS 26+, l’aperçu peut être vérifié sans microphone avec une phrase de
+synthèse française. Ce contrôle prépare le modèle Apple local si nécessaire,
+alimente le même convertisseur et le même analyseur à vitesse réelle, et exige
+des résultats progressifs avant la fin du fichier :
+
+```sh
+say -v Thomas -o /tmp/veloce-preview-fr.aiff 'Bonjour, ceci est un test du texte en direct. Les mots apparaissent pendant que je parle. Nous préparons la réunion de jeudi avec toute notre équipe.'
+build/Veloce.app/Contents/MacOS/Veloce --verify-live-preview /tmp/veloce-preview-fr.aiff
 ```
 
 « SOTA » est un objectif de mesure, pas une promesse accolée à un modèle. Les versions Python et les révisions des poids sont verrouillées. Une mise à jour doit améliorer les résultats d’un corpus français représentatif, en conservant les noms propres, sans régression de latence après relâchement ni de mémoire sur le M2 Pro 16 Go de référence. Le protocole de benchmark est documenté dans la recherche ASR. Les chiffres externes et les mesures synthétiques ne remplacent pas ce corpus réel.

@@ -77,16 +77,15 @@ private struct LivePillLight: NSViewRepresentable {
 
 // MARK: - Voice
 
-/// Famulus' VoiceEnvelope (Magic.swift): the microphone level as a VU meter
-/// reads it, fast attack (60 ms), slow release (350 ms), advanced by the
-/// frames that draw it. The raw level arrives about 20 times a second.
+/// A quick VU envelope for the light: the microphone level arrives about 20
+/// times a second, so short attack and release times keep syllables legible.
 @MainActor
 final class VoiceEnvelope {
     private var target = 0.0
     private var value = 0.0
     private var clock = 0.0
-    let attack = 0.06
-    let release = 0.35
+    let attack = 0.035
+    let release = 0.19
 
     func push(_ raw: Double) { target = min(1, max(0, raw)) }
 
@@ -178,7 +177,7 @@ final class LisereEngine {
         var taps = [Float](repeating: 0, count: 16)
         for k in 0..<16 { taps[k] = Float(sample(at: t - Double(k) * 0.08)) }
 
-        energy += (source - energy) * (1 - exp(-dt / (source > energy ? 0.06 : 0.3)))
+        energy += (source - energy) * (1 - exp(-dt / (source > energy ? 0.045 : 0.22)))
         let calm = reduceMotion ? 0.3 : 1.0
         // The colours turn round the glass in about ten seconds; the voice spins them up.
         rotation += dt * (0.1 + 0.3 * energy) * calm
@@ -210,7 +209,7 @@ final class LisereEngine {
         u[5] = SIMD4(Float(weights[0]), Float(weights[1]), Float(weights[2]), Float(weights[3]))
         u[6] = SIMD4(30, 0, 1, 9)
         u[7] = SIMD4(Float(energy), Float(age(.success)), 99, Float(disappear))
-        u[8] = SIMD4(0, f.hdr ? 1 : 0, -1, Float(weights[5]))
+        u[8] = SIMD4(reduceMotion ? 1 : 0, f.hdr ? 1 : 0, -1, Float(weights[5]))
 
         lively = f.sinceAppear < 0.6 || disappear > 0 || moving || current == .thinking
             || (taps.max() ?? 0) > 0.01 || energy > 0.01
@@ -641,7 +640,7 @@ final class PillLightRenderer {
         float4 w;        // thinking, done, unknown effects, not understood
         float4 b;        // pill margin, 0, countdown fraction, card age
         float4 c;        // energy, done age, not-understood age, disappear
-        float4 mode;     // 0, hdr, pick age (-1: none), question weight
+        float4 mode;     // reduce motion, hdr, pick age (-1: none), question weight
     };
 
     constant float LS_PI = 3.14159265;
@@ -755,20 +754,21 @@ final class PillLightRenderer {
         // Calm: the whole spectrum turns round the glass, a broad sheen breathes
         // on it and one sharp glint runs a little faster than the colours.
         float sheen = pow(0.5 + 0.5 * cos(LS_TAU * (xLoop - rot * 1.35)), 4.0);
-        float glint = pow(0.5 + 0.5 * cos(LS_TAU * (xLoop - t * 0.17 + 0.37)), 36.0) * calmW * (1.0 - wQ);
+        float idleMotion = 1.0 - 0.88 * L.mode.x;
+        float glint = pow(0.5 + 0.5 * cos(LS_TAU * (xLoop - t * 0.17 + 0.37)), 36.0) * calmW * (1.0 - wQ) * idleMotion;
         float3 hue = lsLoop(xLoop - rot);
         float3 film = lsLoop(xLoop - rot - 0.028 * spread);
-        float I = 0.7 + 0.3 * sheen;
+        float I = 0.69 + 0.28 * sheen + 0.025 * sin(t * 1.15) * idleMotion;
 
         // Voice: the light pours from the left end and takes a little over a
         // second to reach the far end, hot near the source, cooler further on.
         float v = halfP / 1.15;
         float voice = lsHist(L, s / v);
         float fall = 1.0 - 0.3 * s / halfP;
-        float pw = saturate(voice * fall * 1.5);
+        float pw = saturate(voice * fall * 1.6);
         hue = mix(hue, lsRamp(s / halfP), pw);
         film = mix(film, lsRamp(s / halfP + 0.018 * spread), pw);
-        I += voice * fall * 0.75;
+        I += voice * fall * 0.95;
         // Sparks ride the flow, head first, leaving the source.
         float cellU = (s - v * t) / 96.0 + side * 0.5;
         float cell = floor(cellU);
@@ -779,13 +779,13 @@ final class PillLightRenderer {
         spark *= smoothstep(0.38, 0.7, chance) * smoothstep(0.0, 16.0, x)
             * smoothstep(0.0, 24.0, s) * smoothstep(0.0, 24.0, halfP - s);
         spark = mix(spark, 0.0, saturate(spread / 3.0));
-        float sparkI = voice * spark * fall * 1.6;
-        float sparkW = 0.45 * saturate(voice * spark * 1.5);
-        float lv = saturate(voice * 1.25);
-        float inDepth = 2.4 + 3.2 * lv;
-        float inI = 0.36 + 0.5 * lv;
-        float haloR = 5.0 + 5.5 * max(lv, 0.5 * energy);
-        float haloI = 0.55 + 0.45 * lv;
+        float sparkI = voice * spark * fall * 1.9;
+        float sparkW = 0.5 * saturate(voice * spark * 1.7);
+        float lv = saturate(voice * 1.45);
+        float inDepth = 2.4 + 3.6 * lv;
+        float inI = 0.34 + 0.58 * lv;
+        float haloR = 5.0 + 7.0 * max(lv, 0.65 * energy);
+        float haloI = 0.5 + 0.58 * lv;
 
         hue = mix(hue, LS_WHITE, 0.6 * glint);
         film = mix(film, LS_WHITE, 0.35 * glint);

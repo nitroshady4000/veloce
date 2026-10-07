@@ -26,6 +26,13 @@ final class AppModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(presentationMode.rawValue, forKey: "dictationPresentation")
             onPresentationModeChange?(presentationMode)
+            if presentationMode == .pill {
+                if let capture, capture.instruction == nil { preview.start(language: capture.language) }
+                else { preview.prepare(language: language) }
+            } else {
+                preview.stop()
+                livePreview = LivePreviewText()
+            }
         }
     }
     @Published var finderExportFormat: String {
@@ -55,7 +62,10 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(vocabulary, forKey: "vocabulary") }
     }
     @Published var language: String {
-        didSet { UserDefaults.standard.set(language, forKey: "language") }
+        didSet {
+            UserDefaults.standard.set(language, forKey: "language")
+            if presentationMode == .pill && !isRecording { preview.prepare(language: language) }
+        }
     }
     @Published var keepHistory: Bool {
         didSet {
@@ -83,6 +93,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastDictationOutcome: DictationOutcome = .none
     /// Apple's on-device words for the pill while dictating (preview only).
     @Published private(set) var livePreview = LivePreviewText()
+    @Published private(set) var livePreviewState: LivePreviewState = .idle
     var isBusy: Bool { meetingBusy || textProcessingBusy || pendingDictationCount > 0 || phase == .preparing || phase == .recording || phase == .transcribing }
     var canStartDictation: Bool {
         !meetingBusy && !textProcessingBusy && phase != .preparing && capture == nil
@@ -182,6 +193,7 @@ final class AppModel: ObservableObject {
             guard let self, self.capture != nil else { return }
             self.livePreview = text
         }
+        preview.onState = { [weak self] state in self?.livePreviewState = state }
         recorder.onLevel = { [weak self] value in
             self?.level = value
             self?.textInstruction?.onLevel(value)
@@ -199,6 +211,7 @@ final class AppModel: ObservableObject {
             Task { @MainActor in self?.refreshPermissions() }
         }
         restorePreparedModel()
+        if presentationMode == .pill { preview.prepare(language: language) }
     }
 
     /// Restore a model the user already prepared, using the local cache only.
@@ -328,6 +341,23 @@ final class AppModel: ObservableObject {
     }
 
     func revealApplicationForPermissions() { permissions.revealApplication() }
+
+    func prepareLivePreview() {
+        if livePreviewState == .permissionDenied {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition") {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            preview.prepare(language: language, requestAuthorization: true)
+        }
+    }
+
+    func refreshLivePreviewAuthorization() {
+        guard presentationMode == .pill, !isRecording else { return }
+        if livePreviewState == .permissionDenied || livePreviewState == .needsAuthorization {
+            preview.prepare(language: language)
+        }
+    }
 
     func prepareModel() {
         guard !isBusy else { return }
