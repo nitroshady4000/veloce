@@ -226,6 +226,9 @@ enum DesignExport {
                 Text("DICTÉE VOCALE").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5)
             }.padding(.bottom, 12)
             row(.idle, title: "Prêt", subtitle: "", time: 0)
+            row(.thinking, title: "Préchauffe du modèle…", subtitle: "Patientez avant de parler", time: 0.7)
+            VelocePill(phase: .success, title: "Prêt à dicter", subtitle: "", detail: "Maintenez Fn pour parler", previewTime: 0.8)
+                .frame(maxWidth: .infinity)
             row(.listening, title: "Enregistrement…", subtitle: "Relâchez Fn pour insérer", level: 0.78, time: 0.4,
                 levelAt: { 0.14 + 0.65 * pow(max(0, sin($0 * 4.2)), 2) })
             VelocePill(phase: .listening, level: 0.7, title: "Enregistrement…", subtitle: "Relâchez Fn pour insérer",

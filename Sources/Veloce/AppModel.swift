@@ -6,6 +6,7 @@ import VeloceCore
 enum DictationPhase { case idle, preparing, ready, recording, transcribing, error }
 enum DictationPresentationMode: String, CaseIterable { case pill, menuBar }
 enum DictationOutcome { case none, inserted, available, empty, failed }
+enum ModelPreparationNotice { case loading, ready, failed }
 enum TextInstructionPhase { case idle, recording, transcribing }
 struct TextInstructionHandlers {
     let onText: (String) -> Void
@@ -20,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published var level: Double = 0
     @Published private(set) var transcriptInserted = false
     @Published private(set) var isHandsFree = false
+    @Published private(set) var modelPreparationNotice: ModelPreparationNotice?
     @Published var presentationMode: DictationPresentationMode {
         didSet {
             UserDefaults.standard.set(presentationMode.rawValue, forKey: "dictationPresentation")
@@ -223,11 +225,13 @@ final class AppModel: ObservableObject {
                 guard token == generation, !Task.isCancelled else { return }
                 markModelLoaded(model)
                 statusMessage = "Prêt. Maintenez Fn pour parler."
+                finishModelPreparationNotice(succeeded: true)
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
                 loadedModel = nil
                 phase = .idle
                 statusMessage = "Chargement automatique impossible. \(error.localizedDescription)"
+                finishModelPreparationNotice(succeeded: false)
             }
         }
     }
@@ -328,6 +332,7 @@ final class AppModel: ObservableObject {
     func prepareModel() {
         guard !isBusy else { return }
         hudDismissal?.cancel(); onHUDVisibility?(false)
+        modelPreparationNotice = nil
         let model = selectedModel
         generation = UUID()
         let token = generation
@@ -345,9 +350,11 @@ final class AppModel: ObservableObject {
                 guard token == generation, !Task.isCancelled else { return }
                 markModelLoaded(model)
                 statusMessage = "Prêt. Maintenez Fn pour parler."
+                finishModelPreparationNotice(succeeded: true)
             } catch {
                 guard token == generation, !Task.isCancelled else { return }
                 phase = .error; statusMessage = error.localizedDescription
+                finishModelPreparationNotice(succeeded: false)
             }
         }
     }
@@ -356,6 +363,15 @@ final class AppModel: ObservableObject {
         if isRecording { finishRecording() } else { startRecording(fromHotkey: false) }
     }
     private func startRecording(fromHotkey: Bool) {
+        if phase == .preparing {
+            // A rejected Fn press must still explain why no capture started.
+            // Keep the notice until loading finishes, even after key release.
+            hudDismissal?.cancel()
+            modelPreparationNotice = .loading
+            onHUDVisibility?(true)
+            rejectHotkeyCapture(fromHotkey)
+            return
+        }
         // A new microphone capture can overlap our FIFO processor, but never
         // meetings, installation, selection rewriting or a spoken instruction.
         guard !meetingBusy, !textProcessingBusy, phase != .preparing, capture == nil,
@@ -376,6 +392,8 @@ final class AppModel: ObservableObject {
             statusMessage = "Quatre dictées sont déjà en cours. Attendez un instant."
             rejectHotkeyCapture(fromHotkey); return
         }
+        hudDismissal?.cancel()
+        modelPreparationNotice = nil
         let snippetPhrases = snippets.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map(\.phrase).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let combinedVocabulary = ([vocabulary] + snippetPhrases).joined(separator: "\n")
@@ -596,12 +614,25 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func dismissHUDLater() {
+    private func finishModelPreparationNotice(succeeded: Bool) {
+        guard modelPreparationNotice == .loading else { return }
+        modelPreparationNotice = succeeded ? .ready : .failed
+        dismissHUDLater(delay: succeeded ? 3_000_000_000 : 5_000_000_000)
+    }
+
+    private func dismissHUDLater(delay: UInt64 = 1_400_000_000) {
         hudDismissal?.cancel()
         hudDismissal = Task {
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled, capture == nil, pipeline.count == 0, !instructionProcessing else { return }
             onHUDVisibility?(false)
+            // Let the pill fade before clearing its title. Also clears the
+            // menu-bar notice when no pill panel was ever created.
+            if modelPreparationNotice != nil {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else { return }
+                modelPreparationNotice = nil
+            }
         }
     }
 

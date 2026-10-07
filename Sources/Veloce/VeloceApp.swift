@@ -39,7 +39,16 @@ struct VeloceApp: App {
         MenuBarExtra {
             MenuContent().environmentObject(model).environmentObject(updates)
         } label: {
-            MenuGlyph(phase: PillPhase(appPhase: model.phase), level: model.level)
+            MenuGlyph(phase: model.modelPreparationNotice == .failed ? .failure : PillPhase(appPhase: model.phase),
+                      level: model.level,
+                      statusLabel: model.phase == .preparing ? "Véloce : préchauffe du modèle" : nil)
+            if model.presentationMode == .menuBar, let notice = model.modelPreparationNotice {
+                switch notice {
+                case .loading: Text("Préchauffe…")
+                case .ready: Text("Prêt · Fn pour dicter")
+                case .failed: Text("Chargement impossible")
+                }
+            }
         }
     }
 }
@@ -50,6 +59,7 @@ private struct MenuContent: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Text("Véloce · \(model.loadedModel?.name ?? "Modèle non chargé")")
+        if model.phase == .preparing { Text("Préchauffe du modèle…") }
         Button("Ouvrir Véloce") {
             openWindow(id: "main"); NSApp.activate(ignoringOtherApps: true)
         }
@@ -65,7 +75,8 @@ private struct MenuContent: View {
         }
         Button("Réécrire ou traduire une sélection…") { model.showTextProcessing() }.disabled(model.isBusy)
         Divider()
-        Text(model.isDictationProcessing && model.canStartDictation ? "Fn pour dicter la suite" : "Maintenir Fn pour dicter")
+        Text(model.phase == .preparing ? "Patientez avant de parler" :
+             model.isDictationProcessing && model.canStartDictation ? "Fn pour dicter la suite" : "Maintenir Fn pour dicter")
         if let latest = model.history.first { Button("Copier le dernier texte") { model.copyTranscript(latest.text) } }
         Divider()
         Button("Rechercher une mise à jour…", action: updates.checkForUpdates)
@@ -129,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.onHUDVisibility = { [weak self] visible in self?.showHUD(visible) }
         model.onPresentationModeChange = { [weak self, weak model] _ in
             guard let model else { return }
-            self?.showHUD(model.presentationMode == .pill && (model.isRecording || model.phase == .transcribing))
+            self?.showHUD(model.presentationMode == .pill &&
+                         (model.isRecording || model.phase == .transcribing || model.modelPreparationNotice != nil))
         }
         model.meetings.onShowMeetings = { [weak self] in self?.showMeetings() }
         for (urls, format) in pendingFiles { importFromFinder(urls, format: format) }

@@ -6,13 +6,14 @@ import SwiftUI
 struct MenuGlyph: View {
     var phase: PillPhase
     var level: Double
+    var statusLabel: String? = nil
     @StateObject private var animator = MenuGlyphAnimator()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Image(nsImage: animator.image)
             .renderingMode(.template)
-            .accessibilityLabel(label)
+            .accessibilityLabel(statusLabel ?? label)
             .onAppear { update() }
             .onChange(of: phase) { _, _ in update() }
             .onChange(of: level) { _, _ in update() }

@@ -25,7 +25,10 @@ struct RecordingHUDView: View {
     }
 
     private var hudDetail: String? {
-        model.phase == .ready && !model.transcriptInserted ? "dans Véloce" : nil
+        if let notice = model.modelPreparationNotice {
+            return notice == .ready ? "Maintenez Fn pour parler" : nil
+        }
+        return model.phase == .ready && !model.transcriptInserted ? "dans Véloce" : nil
     }
 
     private var stopAction: (() -> Void)? {
@@ -38,9 +41,25 @@ struct RecordingHUDView: View {
         return { model.cancel() }
     }
 
-    private var hudPhase: PillPhase { PillPhase(appPhase: model.phase) }
+    private var hudPhase: PillPhase {
+        if let notice = model.modelPreparationNotice {
+            return switch notice {
+            case .loading: .thinking
+            case .ready: .success
+            case .failed: .failure
+            }
+        }
+        return PillPhase(appPhase: model.phase)
+    }
 
     private var hudSubtitle: String {
+        if let notice = model.modelPreparationNotice {
+            return switch notice {
+            case .loading: "Patientez avant de parler"
+            case .ready: "Maintenez Fn pour parler"
+            case .failed: "Ouvrez Véloce pour réessayer"
+            }
+        }
         if model.isRecording, model.pendingDictationCount > 0 {
             let finish = model.isHandsFree ? "Fn pour terminer" : "Relâchez fn"
             return "\(finish) · \(model.pendingDictationCount) en cours"
@@ -56,7 +75,14 @@ struct RecordingHUDView: View {
     }
 
     private var hudTitle: String {
-        switch model.phase {
+        if let notice = model.modelPreparationNotice {
+            return switch notice {
+            case .loading: "Préchauffe du modèle…"
+            case .ready: "Prêt à dicter"
+            case .failed: "Chargement impossible"
+            }
+        }
+        return switch model.phase {
         case .recording: "Enregistrement…"
         case .transcribing: "Transcription…"
         case .preparing: "Préparation du modèle…"
