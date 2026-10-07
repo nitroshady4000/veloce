@@ -141,7 +141,7 @@ private struct TextProcessingView: View {
     @ObservedObject var state: TextProcessingState
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Votre texte, à votre façon.")
+            Text("Réécrire un texte")
                 .font(.system(size: 24, weight: .medium, design: .rounded))
             Text(state.canReplace ? "La sélection sera remplacée seulement après votre validation." : "Collez votre texte ci-dessous, puis copiez le résultat.")
                 .font(.system(size: 12)).foregroundStyle(VeloceTheme.secondary)
@@ -168,7 +168,7 @@ private struct TextProcessingView: View {
                     if state.voicePhase == .recording {
                         WaveformView(level: state.voiceLevel, active: true, barCount: 11, height: 18).frame(width: 66)
                     }
-                    Text(state.voicePhase == .recording ? "On écoute votre consigne. Deux minutes maximum." : "Votre consigne prend forme…")
+                    Text(state.voicePhase == .recording ? "Enregistrement de la consigne…" : "Transcription…")
                         .font(.system(size: 11)).foregroundStyle(VeloceTheme.accent)
                 }
             }

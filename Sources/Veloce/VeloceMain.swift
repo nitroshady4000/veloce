@@ -8,7 +8,17 @@ import VeloceCore
 struct VeloceMain {
     @MainActor static func main() {
         let args = CommandLine.arguments
-        if let index = args.firstIndex(of: "--verify-meeting-workflows"), args.indices.contains(index + 1) {
+        if args.contains("--verify-text-insertion") {
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.prohibited)
+            do {
+                try TextInsertionDiagnostics.verify()
+                print("Text insertion clipboard backup verified")
+            } catch {
+                fputs("Text insertion check: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        } else if let index = args.firstIndex(of: "--verify-meeting-workflows"), args.indices.contains(index + 1) {
             _ = NSApplication.shared
             NSApp.setActivationPolicy(.prohibited)
             Task {
@@ -99,22 +109,7 @@ enum DesignExport {
             .background(VeloceTheme.paper).environment(\.colorScheme, .dark)
         let meetingImage = try nativeSnapshot(meetingView, width: 820)
         try write(meetingImage, to: directory.appendingPathComponent("meetings.png"))
-        let gifURL = directory.appendingPathComponent("pill-voice.gif")
-        guard let gif = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, 36, nil) else { return }
-        CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
-        for frame in 0..<36 {
-            let t = Double(frame) / 9
-            let level = 0.14 + 0.65 * pow(max(0, sin(t * 4.2)), 2)
-            let view = VelocePill(phase: .listening, level: level, title: "À vous la parole",
-                                  subtitle: "Relâchez fn pour écrire", previewTime: t)
-                .padding(18).background(VeloceTheme.paper).environment(\.colorScheme, .dark)
-            let frameRenderer = ImageRenderer(content: view)
-            frameRenderer.scale = 2
-            if let image = frameRenderer.cgImage {
-                CGImageDestinationAddImage(gif, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1.0 / 9]] as CFDictionary)
-            }
-        }
-        guard CGImageDestinationFinalize(gif) else { throw VeloceError.message("Unable to export animation") }
+        try writeVoiceAnimation(to: directory.appendingPathComponent("pill-voice.gif"))
         let glyphURL = directory.appendingPathComponent("menu-glyph.gif")
         guard let glyphGIF = CGImageDestinationCreateWithURL(glyphURL as CFURL, UTType.gif.identifier as CFString, 36, nil) else {
             throw VeloceError.message("Unable to export menu glyph")
@@ -140,30 +135,124 @@ enum DesignExport {
         guard CGImageDestinationFinalize(glyphGIF) else { throw VeloceError.message("Unable to save menu glyph animation") }
         print(directory.path)
     }
+    /// A spring's step response (SwiftUI's response / damping fraction), offline.
+    private static func spring(_ t: Double, response: Double, damping: Double) -> Double {
+        guard t > 0 else { return 0 }
+        let omega = 2 * Double.pi / response
+        let decay = damping * omega
+        let wd = omega * sqrt(max(1e-6, 1 - damping * damping))
+        return 1 - exp(-decay * t) * (cos(wd * t) + decay / wd * sin(wd * t))
+    }
+
+    /// Famulus' pill, offline at 15 fps: it swells in, the words are written in
+    /// light as they are spoken and the capsule widens by steps, the heard
+    /// sentence dims while it is transcribed, the result is written in, then it leaves.
+    private static func writeVoiceAnimation(to url: URL) throws {
+        let fps = 15.0
+        let sentence = "Bonjour Claire, je te confirme la démo de jeudi à dix heures, on se retrouve directement au deuxième étage."
+            .split(separator: " ").map(String.init)
+        let firstWord = 0.45, wordGap = 0.24
+        let spoken = firstWord + Double(sentence.count) * wordGap + 0.3
+        let thinking = 1.3, success = 1.1, leave = 0.25
+        let total = spoken + thinking + success + leave
+        let frameCount = Int(total * fps)
+        guard let gif = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, frameCount, nil) else {
+            throw VeloceError.message("Unable to export animation")
+        }
+        CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        let speech: (Double) -> Double = { t in
+            t < firstWord - 0.1 || t > spoken - 0.2 ? 0.08 : 0.2 + 0.6 * pow(max(0, sin(t * 7.3) * sin(t * 2.1 + 0.6)), 1.2)
+        }
+        func words(at t: Double) -> LivePreviewText {
+            let said = sentence.indices.filter { firstWord + Double($0) * wordGap <= t }
+            // The newest words stay volatile for half a second.
+            let settled = said.filter { t - (firstWord + Double($0) * wordGap) > 0.5 }
+            let moving = said.filter { !settled.contains($0) }
+            return LivePreviewText(stable: settled.map { sentence[$0] }.joined(separator: " "),
+                                   volatile: moving.map { sentence[$0] }.joined(separator: " "))
+        }
+        let heard = LivePreviewText(stable: sentence.joined(separator: " "))
+        var widthFrom = PillLayout.width, widthTo = PillLayout.width, widthSince = 0.0
+        for frame in 0..<frameCount {
+            let t = Double(frame) / fps
+            let view: VelocePill
+            var target: CGFloat
+            let phase: PillPhase
+            let text: LivePreviewText
+            if t < spoken {
+                phase = .listening; text = words(at: t)
+            } else if t < spoken + thinking {
+                phase = .thinking; text = heard
+            } else {
+                phase = .success; text = LivePreviewText()
+            }
+            target = VelocePill.width(phase: phase, words: text, stop: phase == .listening, cancel: phase != .success)
+            let drawn = widthFrom + (widthTo - widthFrom) * spring(t - widthSince, response: 0.3, damping: 0.92)
+            if target != widthTo { widthFrom = drawn; widthTo = target; widthSince = t }
+            let width = widthFrom + (widthTo - widthFrom) * spring(t - widthSince, response: 0.3, damping: 0.92)
+            let leaving = max(0, t - (total - leave))
+            let presence = leaving > 0 ? max(0, 1 - pow(min(1, leaving / 0.15), 2)) : spring(t, response: 0.26, damping: 0.86)
+            switch phase {
+            case .listening:
+                view = VelocePill(phase: .listening, level: speech(t), title: "Enregistrement…", subtitle: "Relâchez Fn pour insérer",
+                                  words: text, stop: {}, cancel: {}, presence: presence, previewTime: t, previewLevelAt: speech,
+                                  previewWordProgress: { index in
+                                      spring(t - (firstWord + Double(index) * wordGap), response: 0.44, damping: 0.86)
+                                  },
+                                  previewWidth: width, previewSinceAppear: t)
+            case .thinking:
+                view = VelocePill(phase: .thinking, title: "Transcription…", subtitle: "Traitement sur ce Mac",
+                                  words: text, cancel: {}, presence: presence, previewTime: t - spoken, previewWidth: width)
+            default:
+                view = VelocePill(phase: .success, title: "Texte inséré", subtitle: "",
+                                  presence: presence, previewTime: t - spoken - thinking, previewWidth: width,
+                                  previewDisappear: leaving > 0 ? 1 - presence : 0)
+            }
+            let frameRenderer = ImageRenderer(content: view.padding(18).background(VeloceTheme.paper).environment(\.colorScheme, .dark))
+            frameRenderer.scale = 2
+            if let image = frameRenderer.cgImage {
+                CGImageDestinationAddImage(gif, image, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1.0 / fps]] as CFDictionary)
+            }
+        }
+        guard CGImageDestinationFinalize(gif) else { throw VeloceError.message("Unable to export animation") }
+    }
+
     private static var gallery: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 VeloceMark(size: 32, color: VeloceTheme.gold)
                 Text("Véloce").font(.system(size: 30, weight: .medium, design: .rounded))
                 Spacer()
-                Text("LA VOIX PREND VIE").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5)
+                Text("DICTÉE VOCALE").font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1.5)
             }.padding(.bottom, 12)
-            row(.idle, title: "Une présence discrète", subtitle: "Même verre, mêmes couleurs", time: 0)
-            row(.listening, title: "À vous la parole", subtitle: "La lumière suit votre voix", level: 0.7, time: 0.4)
-            row(.thinking, title: "Vos mots prennent forme…", subtitle: "La lumière fait le tour du verre", time: 0.7)
-            row(.success, title: "C’est écrit", subtitle: "Un petit élan, puis le calme", time: 0.8)
-            Text("Études d’états visuels · Aucun microphone ni modèle actif")
+            row(.idle, title: "Prêt", subtitle: "", time: 0)
+            row(.listening, title: "Enregistrement…", subtitle: "Relâchez Fn pour insérer", level: 0.78, time: 0.4,
+                levelAt: { 0.14 + 0.65 * pow(max(0, sin($0 * 4.2)), 2) })
+            VelocePill(phase: .listening, level: 0.7, title: "Enregistrement…", subtitle: "Relâchez Fn pour insérer",
+                       words: LivePreviewText(stable: "On se retrouve jeudi à dix heures", volatile: "pour la démo"),
+                       stop: {}, cancel: {}, previewTime: 0.5,
+                       previewLevelAt: { 0.14 + 0.65 * pow(max(0, sin($0 * 4.2)), 2) },
+                       previewWordProgress: { $0 == 8 ? 0.45 : 1 })
+                .frame(maxWidth: .infinity)
+            row(.thinking, title: "Transcription…", subtitle: "Traitement sur ce Mac", time: 0.7)
+            VelocePill(phase: .thinking, title: "Transcription…", subtitle: "Traitement sur ce Mac",
+                       words: LivePreviewText(stable: "On se retrouve jeudi à dix heures pour la démo"), cancel: {}, previewTime: 0.4)
+                .frame(maxWidth: .infinity)
+            row(.success, title: "Texte inséré", subtitle: "", time: 0.8)
+            row(.failure, title: "Erreur · Ouvrez Véloce", subtitle: "", time: 0)
+            Text("Aperçu · Aucun microphone ni modèle actif")
                 .font(.system(size: 10, design: .rounded)).foregroundStyle(VeloceTheme.secondary)
                 .padding(.top, 12)
         }
         .padding(32)
-        .frame(width: 540)
+        .frame(width: PillLayout.canvas.width + 64)
         .foregroundStyle(VeloceTheme.ink)
         .background(VeloceTheme.paper)
         .environment(\.colorScheme, .dark)
     }
-    private static func row(_ phase: PillPhase, title: String, subtitle: String, level: Double = 0, time: Double) -> some View {
-        VelocePill(phase: phase, level: level, title: title, subtitle: subtitle, previewTime: time)
+    private static func row(_ phase: PillPhase, title: String, subtitle: String, level: Double = 0, time: Double,
+                            levelAt: ((Double) -> Double)? = nil) -> some View {
+        VelocePill(phase: phase, level: level, title: title, subtitle: subtitle, previewTime: time, previewLevelAt: levelAt)
             .frame(maxWidth: .infinity)
     }
 

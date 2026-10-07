@@ -91,23 +91,27 @@ enum MenuGlyphDrawing {
     /// An 18 pt template waveform follows the native menu bar appearance.
     /// There is no retained bitmap timer or frame work while the app is idle.
     static func image(phase: PillPhase, level: Double, time: Double) -> NSImage {
-        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
             NSColor.white.setFill()
             NSColor.white.setStroke()
-            if phase == .failure {
-                NSBezierPath(roundedRect: NSRect(x: 8.1, y: 7, width: 1.8, height: 7), xRadius: 0.9, yRadius: 0.9).fill()
-                NSBezierPath(ovalIn: NSRect(x: 8.1, y: 3.7, width: 1.8, height: 1.8)).fill()
+            if phase == .idle || phase == .success {
+                // At rest the bars settle into the Véloce V.
+                let context = NSGraphicsContext.current?.cgContext
+                context?.addPath(VeloceMarkShape().path(in: rect.insetBy(dx: 0.5, dy: 0.5)).cgPath)
+                context?.fillPath()
+            } else if phase == .failure {
+                NSBezierPath(roundedRect: NSRect(x: 8.1, y: 4, width: 1.8, height: 7), xRadius: 0.9, yRadius: 0.9).fill()
+                NSBezierPath(ovalIn: NSRect(x: 8.1, y: 12.5, width: 1.8, height: 1.8)).fill()
             } else {
                 for index in 0..<5 {
                     let distance = abs(Double(index) - 2) / 2
-                    let resting = 12 - distance * 7
                     let height: Double
                     if phase == .listening {
                         let wave = 0.45 + 0.55 * abs(sin(time * 6.1 + Double(index) * 0.83))
                         height = 3 + (3 + level * 9) * wave * (1 - distance * 0.23)
-                    } else if phase == .thinking {
+                    } else {
                         height = 4 + 8 * pow(0.5 + 0.5 * sin(time * 5.0 - Double(index) * 0.9), 2)
-                    } else { height = resting }
+                    }
                     let bar = NSRect(x: 2.0 + Double(index) * 3.0, y: (18 - height) / 2,
                                      width: 2.0, height: height)
                     NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()

@@ -7,11 +7,19 @@
     <key>CFBundleExecutable</key><string>Veloce</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.0</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>0.2.2</string>
+    <key>CFBundleVersion</key><string>4</string>
+    <key>SUFeedURL</key><string>https://github.com/nitroshady4000/veloce/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key><string>JI/OYv8fa93e062r+TKr3lSiSrHAgz8q6i/fprCjKLk=</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUAutomaticallyUpdate</key><true/>
+    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Véloce utilise le microphone pendant vos dictées et vos réunions. Les dictées sont supprimées après transcription ; les pistes des réunions restent sur ce Mac jusqu’à leur suppression.</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>Véloce affiche vos mots pendant que vous parlez grâce à la reconnaissance vocale d’Apple, sur ce Mac. Le texte inséré reste celui du modèle local.</string>
     <key>NSScreenCaptureUsageDescription</key><string>Véloce enregistre l’audio des autres apps sur une piste séparée pendant vos réunions. Aucune image ni vidéo n’est enregistrée.</string>
     <key>NSCalendarsFullAccessUsageDescription</key><string>Véloce lit les réunions à venir pour afficher les rappels que vous activez. Aucun événement n’est modifié.</string>
     <key>NSCalendarsUsageDescription</key><string>Véloce lit vos réunions à venir pour les rappels facultatifs.</string>

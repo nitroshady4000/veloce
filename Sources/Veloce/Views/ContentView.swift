@@ -87,7 +87,7 @@ struct ContentView: View {
                     .tracking(-1.1)
             }
             .padding(.top, 38)
-            Text("Votre voix, simplement.")
+            Text("Dictée vocale")
                 .font(.system(size: 11))
                 .foregroundStyle(VeloceTheme.secondary)
                 .padding(.top, 10)
@@ -127,17 +127,17 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) {
                     Circle().fill(VeloceTheme.green).frame(width: 6, height: 6)
-                    Text("LOCAL PAR NATURE")
+                    Text("TRAITEMENT LOCAL")
                         .font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .tracking(1.1)
                 }
-                Text("Votre voix reste ici.\nVos mots vont partout.")
+                Text("L’audio est traité sur ce Mac.")
                     .font(.system(size: 11))
                     .lineSpacing(4)
                     .foregroundStyle(VeloceTheme.secondary)
                 Rectangle().fill(VeloceTheme.line).frame(height: 1).padding(.vertical, 7)
                 HStack {
-                    Text("Véloce · 0.2")
+                    Text("Véloce · \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
                     Spacer()
                     Text("Open source")
                 }

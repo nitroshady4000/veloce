@@ -7,6 +7,8 @@ Engine/.cache/
 Engine/.models/
 Engine/.uv-cache/
 Engine/.python/
+Engine/.installed-*
+Engine/.extra-*
 __pycache__/
 *.pyc
 .env

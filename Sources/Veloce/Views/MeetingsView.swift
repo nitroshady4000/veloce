@@ -95,8 +95,8 @@ struct MeetingPageContent: View {
 
     private var introduction: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionEyebrow(text: "Les réunions, à votre rythme")
-            Text("Écoutez. On garde le fil.")
+            SectionEyebrow(text: "Enregistrement et transcription")
+            Text("Réunions")
                 .font(.system(size: 34, weight: .medium, design: .rounded)).tracking(-1)
             Text("Enregistrez une réunion, ou déposez vos audios et vidéos. Transcription, recherche et notes restent sur ce Mac.")
                 .font(.system(size: 13)).foregroundStyle(VeloceTheme.secondary).lineSpacing(4)
@@ -151,7 +151,7 @@ struct MeetingPageContent: View {
                 Divider().overlay(VeloceTheme.secondary.opacity(0.15))
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Vous avez déjà l’enregistrement ?").font(.system(size: 12, weight: .medium))
+                        Text("Importer un enregistrement").font(.system(size: 12, weight: .medium))
                         Toggle("Transcrire après l’import", isOn: $meetings.transcribeAfterImport)
                             .toggleStyle(.checkbox).font(.system(size: 11)).disabled(blocked)
                     }
@@ -171,7 +171,7 @@ struct MeetingPageContent: View {
                 HStack(alignment: .top) {
                     Image(systemName: "person.2.wave.2").foregroundStyle(VeloceTheme.amber)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("Qui a dit quoi ?").font(.system(size: 13, weight: .semibold))
+                        Text("Identification des interlocuteurs").font(.system(size: 13, weight: .semibold))
                         Text("Le modèle local distingue les voix. Vous pouvez ensuite nommer les interlocuteurs, les fusionner ou réattribuer un passage.")
                             .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary).lineSpacing(3)
                     }
@@ -359,7 +359,7 @@ struct MeetingPageContent: View {
     private var questionCard: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 12) {
-                SectionEyebrow(text: "Demandez à vos réunions")
+                SectionEyebrow(text: "Questions sur les réunions")
                 HStack {
                     TextField("Qu’a-t-on décidé concernant… ?", text: $question).textFieldStyle(.roundedBorder).disabled(blocked)
                     Button("Demander") { meetings.askQuestion(question, allMeetings: questionAllMeetings) }

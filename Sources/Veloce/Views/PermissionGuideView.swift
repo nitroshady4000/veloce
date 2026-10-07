@@ -78,10 +78,10 @@ struct PermissionGuideContent: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(state.allPermissionsReady ? "Tout est prêt." : "Un instant, et c’est à vous.")
+                Text(state.allPermissionsReady ? "Autorisations accordées" : "Autorisations requises")
                     .font(.system(size: 27, weight: .medium, design: .rounded))
                     .tracking(-0.7)
-                Text(state.allPermissionsReady ? "Véloce peut vous entendre et écrire dans vos apps." : "Deux permissions pour parler avec Fn et retrouver vos mots là où vous écrivez.")
+                Text(state.allPermissionsReady ? "Le microphone et l’insertion de texte sont autorisés." : "Autorisez le microphone et l’insertion de texte pour utiliser la dictée.")
                     .font(.system(size: 12))
                     .foregroundStyle(VeloceTheme.secondary)
                     .lineSpacing(3)
@@ -139,7 +139,7 @@ struct PermissionGuideContent: View {
             }
 
             if !state.allPermissionsReady {
-                DisclosureGroup("Besoin d’un coup de main ?", isExpanded: $showRecovery) {
+                DisclosureGroup("Aide", isExpanded: $showRecovery) {
                     VStack(alignment: .leading, spacing: 9) {
                         Text(recoveryText)
                             .font(.system(size: 11))
@@ -166,7 +166,7 @@ struct PermissionGuideContent: View {
                 .foregroundStyle(VeloceTheme.secondary)
             }
 
-            Text("Votre audio reste sur ce Mac. Le microphone s’active uniquement pendant une dictée.")
+            Text("L’audio reste sur ce Mac. Le microphone est actif pendant la dictée.")
                 .font(.system(size: 10))
                 .foregroundStyle(VeloceTheme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -219,31 +219,31 @@ struct PermissionGuideContent: View {
         return selected == .microphone ? "mic" : "cursorarrow.rays"
     }
     private var detailTitle: String {
-        if selectedReady { return "Cette permission est prête." }
+        if selectedReady { return "Autorisation accordée." }
         if selected == .accessibility {
-            return state.accessibilityGranted ? "Fn attend encore le feu vert." : "Autorisez Véloce dans Accessibilité."
+            return state.accessibilityGranted ? "Fn n’est pas encore détectée. Réessayez." : "Autorisez Véloce dans Accessibilité."
         }
         switch state.microphonePermission {
-        case .notDetermined: return "Laissez Véloce vous entendre."
+        case .notDetermined: return "Autorisez l’accès au microphone."
         case .denied: return "Activez le microphone pour Véloce."
         case .restricted: return "Le microphone est restreint sur ce Mac."
         case .granted: return "Le microphone est prêt."
         }
     }
     private var detailText: String {
-        if selectedReady { return "Passez à l’autre permission pour terminer la configuration." }
+        if selectedReady { return "Autorisez l’autre accès pour terminer la configuration." }
         if selected == .accessibility {
             if state.accessibilityGranted {
-                return "L’accès est autorisé, mais le raccourci n’a pas encore démarré. Réessayez ; si nécessaire, utilisez l’aide ci-dessous."
+                return "L’accès est autorisé, mais Fn n’est pas détectée. Réessayez ou consultez l’aide ci-dessous."
             }
             if state.accessibilityRequested || state.permissionSettingsOpened == .accessibility {
-                return "Dans Confidentialité et sécurité → Accessibilité, activez l’interrupteur à côté de Véloce. Nous vérifions dès que l’accès est disponible."
+                return "Dans Confidentialité et sécurité → Accessibilité, activez Véloce. L’autorisation sera vérifiée automatiquement."
             }
-            return "macOS vous demandera d’ouvrir ses réglages. Activez ensuite Véloce pour détecter Fn et insérer vos dictées dans vos apps."
+            return "Ouvrez les réglages macOS, puis activez Véloce dans Accessibilité pour détecter Fn et insérer le texte."
         }
         switch state.microphonePermission {
-        case .notDetermined: return "Cliquez sur Autoriser, puis acceptez la demande de macOS. Vous gardez le contrôle : Véloce écoute seulement pendant la dictée."
-        case .denied: return "Dans Confidentialité et sécurité → Microphone, activez Véloce. L’état se mettra à jour automatiquement."
+        case .notDetermined: return "Cliquez sur Autoriser, puis acceptez la demande de macOS."
+        case .denied: return "Dans Confidentialité et sécurité → Microphone, activez Véloce."
         case .restricted: return "Un réglage système ou une règle d’administration empêche l’accès. Une personne qui administre ce Mac doit lever cette restriction."
         case .granted: return "Le microphone est autorisé."
         }
@@ -271,9 +271,9 @@ struct PermissionGuideContent: View {
     }
     private var recoveryText: String {
         if selected == .microphone {
-            return "Si macOS vous demande de quitter puis de rouvrir Véloce, faites-le une fois le réglage activé. Si aucune entrée Véloce n’apparaît, fermez ce guide puis réessayez la demande de microphone."
+            return "Si macOS le demande, quittez puis rouvrez Véloce après avoir activé le microphone. Si Véloce n’apparaît pas, fermez ce guide et relancez la demande."
         }
-        return "Véloce est absent ? Ouvrez son emplacement puis glissez cette app dans la liste Accessibilité. Après une mise à jour de développement, une ancienne entrée peut rester cochée : retirez cette entrée avec −, ajoutez l’app indiquée ci-dessous puis activez-la. Si macOS le demande, quittez et rouvrez Véloce."
+        return "Si Véloce n’apparaît pas, ouvrez son emplacement puis glissez l’app dans la liste Accessibilité. Supprimez une ancienne entrée si nécessaire, ajoutez l’app indiquée ci-dessous et activez-la. Si macOS le demande, quittez puis rouvrez Véloce."
     }
 
     private var settingsPreview: some View {

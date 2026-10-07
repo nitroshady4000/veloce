@@ -27,17 +27,51 @@ final class EngineClient {
     var onExit: (() -> Void)?
     var onMeetingProgress: ((Double, String) -> Void)?
 
-    let directory: URL = {
+    private static var externalDirectory: URL? {
         if let value = ProcessInfo.processInfo.environment["VELOCE_ENGINE_DIR"] {
             return URL(fileURLWithPath: value)
         }
         if let value = Bundle.main.object(forInfoDictionaryKey: "VeloceEngineDirectory") as? String, !value.isEmpty {
             return URL(fileURLWithPath: value)
         }
-        return (Bundle.main.resourceURL ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).appendingPathComponent("Engine")
-    }()
-    var installed: Bool { requestOverride != nil || FileManager.default.isExecutableFile(atPath: python.path) }
-    private var python: URL { directory.appendingPathComponent(".venv/bin/python") }
+        return nil
+    }
+    let directory = EngineClient.externalDirectory ?? (Bundle.main.resourceURL ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).appendingPathComponent("Engine")
+    /// Source is replaced with the app; Python and model downloads survive updates.
+    private var runtimeDirectory: URL {
+        if let value = ProcessInfo.processInfo.environment["VELOCE_ENGINE_RUNTIME_DIR"], !value.isEmpty {
+            return URL(fileURLWithPath: value)
+        }
+        if Self.externalDirectory != nil { return directory }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Veloce/Engine")
+    }
+    var installed: Bool {
+        if requestOverride != nil { return true }
+        guard hasExistingEnvironment else { return false }
+        if runtimeDirectory == directory { return true }
+        // A new release may require a dependency sync before its worker can run.
+        return ["uv.lock", "pyproject.toml"].allSatisfy { name in
+            guard let current = try? Data(contentsOf: directory.appendingPathComponent(name)),
+                  let installed = try? Data(contentsOf: runtimeDirectory.appendingPathComponent(".installed-" + name)) else { return false }
+            return current == installed
+        }
+    }
+    var hasExistingEnvironment: Bool { requestOverride != nil || FileManager.default.isExecutableFile(atPath: python.path) }
+    private var python: URL { runtimeDirectory.appendingPathComponent(".venv/bin/python") }
+
+    private var engineEnvironment: [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["VELOCE_ENGINE_RUNTIME_DIR"] = runtimeDirectory.path
+        if environment["VELOCE_MODEL_CACHE"] == nil {
+            let cache = Self.externalDirectory != nil ? directory.appendingPathComponent(".models") :
+                FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Veloce/models")
+            environment["VELOCE_MODEL_CACHE"] = cache.path
+        }
+        // Python must never create bytecode inside a signed application bundle.
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        return environment
+    }
 
     func install(includeParakeet: Bool, includeMeetings: Bool = false) async throws {
         if requestOverride != nil { try Task.checkCancellation(); return }
@@ -53,7 +87,7 @@ final class EngineClient {
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
         task.arguments = [script.path] + (includeParakeet ? ["--parakeet"] : []) + (includeMeetings ? ["--meetings"] : [])
         task.currentDirectoryURL = directory
-        var environment = ProcessInfo.processInfo.environment
+        var environment = engineEnvironment
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         task.environment = environment
         // No transcript or credentials go through the setup process.
@@ -110,13 +144,9 @@ final class EngineClient {
         worker.arguments = ["-u", directory.appendingPathComponent("worker.py").path]
         worker.currentDirectoryURL = directory
         worker.standardInput = stdin; worker.standardOutput = stdout; worker.standardError = stderr
-        var environment = ProcessInfo.processInfo.environment
+        var environment = engineEnvironment
         environment["PYTHONUNBUFFERED"] = "1"
         environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        // Development bundle points at this checkout; reuse its tested model cache.
-        if environment["VELOCE_MODEL_CACHE"] == nil, Bundle.main.object(forInfoDictionaryKey: "VeloceEngineDirectory") != nil {
-            environment["VELOCE_MODEL_CACHE"] = directory.appendingPathComponent(".models").path
-        }
         worker.environment = environment
         input = stdin.fileHandleForWriting; output = stdout.fileHandleForReading; errors = stderr.fileHandleForReading
         stdout.fileHandleForReading.readabilityHandler = { [weak self, weak worker] handle in

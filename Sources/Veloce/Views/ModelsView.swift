@@ -7,11 +7,11 @@ struct ModelsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 27) {
             VStack(alignment: .leading, spacing: 14) {
-                SectionEyebrow(text: "Le bon moteur, pour vos mots")
-                Text("À votre rythme.")
+                SectionEyebrow(text: "Reconnaissance vocale")
+                Text("Modèles")
                     .font(.system(size: 41, weight: .medium, design: .rounded))
                     .tracking(-1.5)
-                Text("Trois modèles locaux. Choisissez votre équilibre entre finesse et rapidité.")
+                Text("Choisissez un modèle selon vos besoins de précision et de rapidité.")
                     .font(.system(size: 13))
                     .lineSpacing(5)
                     .foregroundStyle(VeloceTheme.secondary)
@@ -30,13 +30,13 @@ struct ModelsView: View {
                         .font(.system(size: 23, weight: .light))
                         .foregroundStyle(model.engineReady ? VeloceTheme.green : VeloceTheme.accent)
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(model.engineReady ? "Prêt pour vos prochaines idées." : "Un téléchargement, puis la liberté.")
+                        Text(model.phase == .preparing ? "Chargement du modèle…" : model.engineReady ? "Modèle prêt" : "Modèle non chargé")
                             .font(.system(size: 17, weight: .medium, design: .rounded))
                         Text(model.statusMessage)
                             .font(.system(size: 12))
                             .foregroundStyle(VeloceTheme.secondary)
                             .textSelection(.enabled)
-                        if !model.engineReady {
+                        if !model.engineReady && model.phase != .preparing {
                             Text("La première préparation télécharge le modèle. Une fois installé, la reconnaissance fonctionne hors ligne.")
                                 .font(.system(size: 11))
                                 .lineSpacing(4)
@@ -51,8 +51,8 @@ struct ModelsView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                SectionEyebrow(text: "Le choix reste ouvert")
-                Text("Les modèles évoluent vite. Véloce garde un moteur remplaçable, pour accueillir les progrès sans compliquer la dictée.")
+                SectionEyebrow(text: "À propos des modèles")
+                Text("Vous pourrez choisir un autre moteur lorsque de nouveaux modèles seront disponibles.")
                     .font(.system(size: 12))
                     .lineSpacing(5)
                     .foregroundStyle(VeloceTheme.secondary)
@@ -114,13 +114,13 @@ struct ModelsView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isBusy || model.isRecording || (loaded && selected && model.engineReady))
-            .accessibilityLabel(loaded ? "Charger \(option.name)" : "Télécharger et préparer \(option.name)")
+            .accessibilityLabel(loaded ? "Charger \(option.name)" : "Préparer \(option.name)")
             if loaded {
                 Label("En mémoire", systemImage: "circle.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(VeloceTheme.green)
             } else {
-                Text(selected ? "Modèle sélectionné" : "Sur votre Mac")
+                Text(selected ? "Modèle sélectionné" : "Disponible")
                     .font(.system(size: 9))
                     .foregroundStyle(VeloceTheme.secondary)
             }

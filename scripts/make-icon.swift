@@ -2,7 +2,7 @@
 import AppKit
 import Foundation
 
-// Draw the same simple V as the SwiftUI wordmark, directly into native bitmaps.
+// Draw the same waveform V as the SwiftUI wordmark, directly into native bitmaps.
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let iconset = root.appendingPathComponent(".build/icon-assets/AppIcon.iconset")
 let resources = root.appendingPathComponent("Resources")
@@ -44,31 +44,29 @@ func renderIcon(pixels: Int) throws -> Data {
     inner.lineWidth = 2
     inner.stroke()
 
-    // One clear V, with Famulus' gold-to-coral light on warm dark glass.
-    // Match the SwiftUI glyph; the app animates this same silhouette.
+    // The waveform V of VeloceMarkShape (unit space, y down), flipped for AppKit.
+    let bars: [(CGFloat, CGFloat, CGFloat)] = [
+        (0.180, 0.260, 0.470), (0.340, 0.385, 0.690), (0.500, 0.560, 0.840),
+        (0.660, 0.300, 0.700), (0.820, 0.150, 0.450)
+    ]
+    let side: CGFloat = 640, width = side * 0.13
     let mark = CGMutablePath()
-    mark.move(to: CGPoint(x: 267, y: 592))
-    mark.addLine(to: CGPoint(x: 432, y: 295))
-    mark.addCurve(to: CGPoint(x: 478, y: 295), control1: CGPoint(x: 445, y: 268), control2: CGPoint(x: 463, y: 268))
-    mark.addLine(to: CGPoint(x: 743, y: 720))
+    for (x, top, bottom) in bars {
+        let rect = CGRect(x: 512 + (x - 0.5) * side - width / 2, y: 512 + (0.495 - bottom) * side,
+                          width: width, height: (bottom - top) * side)
+        mark.addRoundedRect(in: rect, cornerWidth: width / 2, cornerHeight: width / 2)
+    }
     let cg = context.cgContext
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     cg.saveGState()
     cg.addPath(mark)
-    cg.setLineWidth(74)
-    cg.setLineCap(.round)
-    cg.setLineJoin(.round)
-    cg.setStrokeColor(NSColor(srgbRed: 1, green: 0.71, blue: 0.28, alpha: 0.76).cgColor)
+    cg.setFillColor(NSColor(srgbRed: 1, green: 0.71, blue: 0.28, alpha: 0.76).cgColor)
     cg.setShadow(offset: .zero, blur: 46, color: NSColor(srgbRed: 1, green: 0.47, blue: 0.21, alpha: 0.48).cgColor)
-    cg.strokePath()
+    cg.fillPath()
     cg.restoreGState()
 
     cg.saveGState()
     cg.addPath(mark)
-    cg.setLineWidth(74)
-    cg.setLineCap(.round)
-    cg.setLineJoin(.round)
-    cg.replacePathWithStrokedPath()
     cg.clip()
     let colors = [
         NSColor(srgbRed: 1, green: 0.435, blue: 0.369, alpha: 1).cgColor,

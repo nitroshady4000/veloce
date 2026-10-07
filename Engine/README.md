@@ -4,7 +4,7 @@ An independent, persistent Python process speaks JSON Lines over stdin/stdout. I
 
 ## Setup
 
-Requires Apple Silicon, macOS, and [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Requires Apple Silicon and macOS. Development setup also needs [uv](https://docs.astral.sh/uv/getting-started/installation/); the installed app includes it.
 
 ```sh
 bash Engine/bootstrap.sh
@@ -15,9 +15,11 @@ bash Engine/bootstrap.sh --meetings
 Engine/.venv/bin/python -u Engine/worker.py
 ```
 
-`uv.lock` pins all transitive dependencies. `bootstrap.sh` uses Python 3.12, preferring an installed compatible interpreter; uv may download Python when missing. The venv is a development environment, not a relocatable distribution runtime. A signed release needs an embedded Python runtime with license notices and an installation test on a clean Mac.
+`uv.lock` pins all transitive dependencies. Development setup uses Python 3.12, preferring an installed compatible interpreter; uv may download Python when missing. The development venv is not relocatable.
 
-Run setup from the app only after an explicit setup action. Never invoke shell snippets constructed from user text. Pass process arguments as separate values.
+The installed app bundles engine source in `Contents/Resources/Engine` and uv in `Contents/Resources/uv`. Setup creates a managed Python and venv under `~/Library/Application Support/Veloce/Engine`, independently of Homebrew and the repository. Model files live in `~/Library/Caches/Veloce/models`. Replacing the app leaves both directories intact. EngineClient disables Python bytecode writes inside the signed bundle. Bootstrap synchronizes the frozen lockfile into the external environment, then records the installed lockfile/project metadata and enabled optional backends. A later app update resynchronizes changed dependencies before restoring an existing environment; previously enabled extras are included.
+
+First-time setup starts from an explicit app setup action. Never invoke shell snippets constructed from user text. Pass process arguments as separate values. When migrating an existing development installation, copy its model cache and optionally its uv cache into the persistent locations, then bootstrap a fresh persistent environment; do not relocate the development venv.
 
 ## Protocol version 1
 
@@ -128,9 +130,10 @@ Environment:
 - `VELOCE_MODEL_CACHE`: defaults to `~/Library/Caches/Veloce/models`. For development use `$PWD/Engine/.models`.
 - `VELOCE_OFFLINE=1`: forbids fetching missing model files. Already cached models continue working.
 - `VELOCE_UV_BIN`: optional absolute uv path for setup.
+- `VELOCE_ENGINE_RUNTIME_DIR`: optional directory containing `.venv`, `.python`, `.uv-cache`, and installation metadata. Defaults to the checkout for development or `~/Library/Application Support/Veloce/Engine` for a bundled engine.
 - `UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR`: optional setup cache/runtime locations.
 
-The app locates this directory itself (`VELOCE_ENGINE_DIR` is an app setting); pass the absolute `.venv/bin/python` and `worker.py` paths to `Process`.
+The app locates the bundled source itself. `VELOCE_ENGINE_DIR` overrides its source location for development and defaults runtime/model storage to that directory's `.venv` and `.models`. Pass the absolute runtime `.venv/bin/python` and source `worker.py` paths to `Process`.
 
 ## Verification
 

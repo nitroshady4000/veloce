@@ -43,6 +43,25 @@ class WorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(EngineError, "Load the selected model"):
             self.engine.handle({"method": "transcribe", "params": {"audio_path": "/tmp/no.wav"}})
 
+    def test_cached_load_uses_only_cached_backend_factory(self):
+        cached = []
+        self.engine.cached_backend_factory = lambda model: cached.append(model) or FakeBackend()
+        result = self.engine.handle({"method": "load_cached", "params": {"model": "qwen3-0.6b"}})
+        self.assertEqual(result["state"], "ready")
+        self.assertEqual(cached, ["qwen3-0.6b"])
+        self.assertEqual(self.loads, [])
+        self.assertEqual(self.events[0]["state"], "loading_cached")
+
+    def test_cached_load_miss_never_falls_back_to_download(self):
+        self.engine.cached_backend_factory = lambda _model: (_ for _ in ()).throw(
+            EngineError("model_not_cached", "missing")
+        )
+        with self.assertRaisesRegex(EngineError, "missing"):
+            self.engine.handle({"method": "load_cached", "params": {"model": "qwen3-0.6b"}})
+        self.assertEqual(self.loads, [])
+        self.assertIsNone(self.engine.backend)
+        self.assertIsNone(self.engine.model_id)
+
     def test_invalid_model_does_not_unload_current_model(self):
         self.load()
         with self.assertRaises(EngineError):

@@ -3,172 +3,251 @@ import ApplicationServices
 import Carbon
 import VeloceCore
 
-/// Pastes only into an accessible text input whose app, element and caret still match.
+/// Captures the destination before the HUD appears. Incomplete AX metadata must
+/// not prevent Cmd+V, but an observed focus change or user edit must prevent it.
 @MainActor
 final class TextInserter {
     fileprivate struct Target {
         let id = UUID()
         let processIdentifier: pid_t
-        let element: AXUIElement
-        let selection: CFTypeRef
+        let element: AXUIElement?
+        let focusedElement: AXUIElement?
         let window: AXUIElement?
-        let selectedText: String?
-        let value: String?
+        let snapshot: TextInputSnapshot
+        let requiresSelectedText: Bool
         let isOwnContinuation: Bool
     }
 
     struct InsertionReceipt {
         fileprivate let previous: Target
-        fileprivate let selection: CFTypeRef
+        fileprivate let selection: NSRange
         fileprivate let value: String
     }
     struct InsertionResult {
         let inserted: Bool
         let receipt: InsertionReceipt?
-        static let failed = InsertionResult(inserted: false, receipt: nil)
-    }
-
-    private struct ClipboardItem {
-        let representations: [(NSPasteboard.PasteboardType, Data)]
-    }
-
-    private struct ClipboardSnapshot {
-        let items: [ClipboardItem]
-        let changeCount: Int
+        let message: String?
+        static let failed = InsertionResult(inserted: false, receipt: nil, message: nil)
     }
 
     private var target: Target?
     private var insertionInProgress = false
+    private var inputMonitor: Any?
+    private var activationObserver: NSObjectProtocol?
+    private var userInteracted = false
+    private var captureFailure: String?
 
-    /// Call synchronously when dictation begins, before displaying any focus-taking UI.
+    isolated deinit { stopTracking() }
+
     @discardableResult
     func captureTarget(_ app: NSRunningApplication?) -> Bool {
-        target = nil
-        guard let app,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
-              let element = focusedTextElement(in: app.processIdentifier),
-              let selection = attribute(kAXSelectedTextRangeAttribute, of: element)
-        else { return false }
-        target = Target(
-            processIdentifier: app.processIdentifier,
-            element: element,
-            selection: selection,
-            window: elementAttribute(kAXWindowAttribute, of: element),
-            selectedText: attribute(kAXSelectedTextAttribute, of: element) as? String,
-            value: attribute(kAXValueAttribute, of: element) as? String,
-            isOwnContinuation: false
-        )
+        clearTarget()
+        guard AXIsProcessTrusted() else {
+            captureFailure = "Autorisez Accessibilité pour le collage automatique. Texte disponible avec Copier."
+            return false
+        }
+        guard let app, NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else {
+            captureFailure = "Maintenez Fn depuis le champ de destination. Texte disponible avec Copier."
+            return false
+        }
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(application, 0.15)
+        // Electron exposes its Chromium accessibility tree on this request.
+        // https://www.electronjs.org/docs/latest/tutorial/accessibility/
+        AXUIElementSetAttributeValue(application, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        let focused = focusedElement(in: app.processIdentifier)
+        guard !IsSecureEventInputEnabled(), !isProtected(focused) else {
+            captureFailure = "Collage indisponible dans ce champ protégé."
+            return false
+        }
+        let element = editableElement(focused)
+        target = Target(processIdentifier: app.processIdentifier, element: element, focusedElement: focused,
+                        window: window(in: app.processIdentifier, element: focused),
+                        snapshot: snapshot(element), requiresSelectedText: false, isOwnContinuation: false)
+        startTracking(app.processIdentifier)
         return true
     }
 
-    /// Capture before a writing panel takes focus. Reading never changes the clipboard.
+    /// The rewrite panel takes focus intentionally. Replacement still requires
+    /// an exact, visible selection when the user explicitly chooses Replace.
     func captureSelectedText(_ app: NSRunningApplication?) -> String? {
-        guard captureTarget(app), let target, let text = target.selectedText, !text.isEmpty else {
-            clearTarget()
-            return nil
+        guard captureTarget(app), let target, let text = target.snapshot.selectedText,
+              !text.isEmpty, target.snapshot.selection != nil else {
+            clearTarget(); return nil
         }
+        stopTracking()
+        self.target = Target(processIdentifier: target.processIdentifier, element: target.element,
+                             focusedElement: target.focusedElement, window: target.window, snapshot: target.snapshot,
+                             requiresSelectedText: true, isOwnContinuation: false)
         return text
     }
 
-    /// A false result leaves the transcript available for an explicit Copy action.
     func insert(_ text: String, into app: NSRunningApplication?) async -> Bool {
         await insertWithReceipt(text, into: app).inserted
     }
 
     func insertWithReceipt(_ text: String, into app: NSRunningApplication?) async -> InsertionResult {
-        guard !insertionInProgress, !Task.isCancelled, !text.isEmpty, let app, let target,
-              target.processIdentifier == app.processIdentifier,
-              targetStillMatches(target),
-              let savedClipboard = snapshotClipboard(),
+        guard !insertionInProgress, !Task.isCancelled, !text.isEmpty else { return .failed }
+        guard let app, let target, target.processIdentifier == app.processIdentifier else {
+            return InsertionResult(inserted: false, receipt: nil, message: captureFailure)
+        }
+        guard targetStillMatches(target) else {
+            clearTarget()
+            return InsertionResult(inserted: false, receipt: nil,
+                                   message: "La destination a changé. Texte disponible avec Copier.")
+        }
+        guard let savedClipboard = ClipboardBackup.capture(),
               let source = CGEventSource(stateID: .combinedSessionState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
         else { return .failed }
 
         let pastedText: String
-        if target.isOwnContinuation, let value = target.value, let selection = range(target.selection) {
+        if target.isOwnContinuation, let value = target.snapshot.value, let selection = target.snapshot.selection {
             pastedText = TextInsertionAdvance.continuation(text, in: value, at: selection)
         } else { pastedText = text }
 
         insertionInProgress = true
         defer {
             insertionInProgress = false
-            if self.target?.id == target.id { self.target = nil }
+            if self.target?.id == target.id { clearTarget() }
         }
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount == savedClipboard.changeCount else { return .failed }
         pasteboard.clearContents()
         guard pasteboard.setString(pastedText, forType: .string) else {
-            restore(savedClipboard.items, ifUnchangedSince: pasteboard.changeCount)
+            savedClipboard.restore(ifUnchangedSince: pasteboard.changeCount)
             return .failed
         }
         let temporaryClipboardVersion = pasteboard.changeCount
-
-        // Recheck after clipboard materialization, which can involve another process.
         guard !Task.isCancelled, targetStillMatches(target) else {
-            restore(savedClipboard.items, ifUnchangedSince: temporaryClipboardVersion)
+            savedClipboard.restore(ifUnchangedSince: temporaryClipboardVersion)
             return .failed
         }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.setIntegerValueField(.eventSourceUserData, value: VeloceEventSourceUserData.textInserterPaste)
-        keyUp.setIntegerValueField(.eventSourceUserData, value: VeloceEventSourceUserData.textInserterPaste)
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-
-        // This delay deliberately survives task cancellation so the receiving app
-        // has time to read the clipboard before it is restored.
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { continuation.resume() }
+        // Tag both events: our paste must not cancel a concurrent Fn recording.
+        for event in [keyDown, keyUp] {
+            event.flags = .maskCommand
+            event.setIntegerValueField(.eventSourceUserData, value: VeloceEventSourceUserData.textInserterPaste)
+            event.post(tap: .cghidEventTap)
         }
-        restore(savedClipboard.items, ifUnchangedSince: temporaryClipboardVersion)
-        let receipt = verifiedReceipt(for: target, insertedText: pastedText)
-        return InsertionResult(inserted: true, receipt: receipt)
+
+        // Restore only after the destination acknowledges the paste. A fixed
+        // delay can restore the old clipboard before a slow renderer reads it.
+        let deadline = Date().addingTimeInterval(1.2)
+        repeat {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { continuation.resume() }
+            }
+            if let receipt = verifiedReceipt(for: target, insertedText: pastedText) {
+                savedClipboard.restore(ifUnchangedSince: temporaryClipboardVersion)
+                return InsertionResult(inserted: true, receipt: receipt, message: "Texte inséré.")
+            }
+            if pasteWasObserved(target, insertedText: pastedText) {
+                savedClipboard.restore(ifUnchangedSince: temporaryClipboardVersion)
+                return InsertionResult(inserted: true, receipt: nil, message: "Texte inséré.")
+            }
+        } while Date() < deadline
+
+        // Keep the transcription available for a delayed paste or manual Cmd+V.
+        // Never overwrite a clipboard the user has changed during processing.
+        if let before = target.snapshot.value, let element = target.element,
+           (attribute(kAXValueAttribute, of: element) as? String) == before {
+            return InsertionResult(inserted: false, receipt: nil,
+                                   message: "Collage non confirmé. Texte disponible avec Copier.")
+        }
+        return InsertionResult(inserted: true, receipt: nil, message: "Collage envoyé.")
     }
 
-    /// Rebase only a target captured at the exact same original selection.
-    /// The current text and caret must still prove that this app's own paste occurred.
+    /// Only an exact paste acknowledgement can advance a queued dictation.
     func advanceAfterOwnInsertion(_ receipt: InsertionReceipt) {
-        guard let target, target.processIdentifier == receipt.previous.processIdentifier,
-              CFEqual(target.element, receipt.previous.element),
-              sameWindow(target.window, receipt.previous.window),
-              currentMatches(receipt.previous, selection: receipt.selection),
-              attribute(kAXValueAttribute, of: target.element) as? String == receipt.value else { return }
-        let capturedBefore = CFEqual(target.selection, receipt.previous.selection)
-            && target.selectedText == receipt.previous.selectedText && target.value == receipt.previous.value
-        let capturedAfter = CFEqual(target.selection, receipt.selection) && target.value == receipt.value
+        guard let target, !userInteracted,
+              target.processIdentifier == receipt.previous.processIdentifier,
+              let element = target.element, let previous = receipt.previous.element,
+              CFEqual(element, previous), sameWindow(target.window, receipt.previous.window) != false,
+              currentElementMatches(target) else { return }
+        let current = snapshot(element)
+        guard current.selection == receipt.selection, current.value == receipt.value else { return }
+        let capturedBefore = target.snapshot == receipt.previous.snapshot
+        let capturedAfter = target.snapshot.selection == receipt.selection && target.snapshot.value == receipt.value
         guard capturedBefore || capturedAfter else { return }
-        self.target = Target(processIdentifier: target.processIdentifier, element: target.element,
-                             selection: receipt.selection, window: target.window,
-                             selectedText: attribute(kAXSelectedTextAttribute, of: target.element) as? String,
-                             value: receipt.value, isOwnContinuation: true)
+        self.target = Target(processIdentifier: target.processIdentifier, element: element,
+                             focusedElement: target.focusedElement, window: target.window, snapshot: current,
+                             requiresSelectedText: target.requiresSelectedText, isOwnContinuation: true)
     }
 
     private func verifiedReceipt(for target: Target, insertedText: String) -> InsertionReceipt? {
-        guard target.window != nil, let before = target.value, let originalRange = range(target.selection),
+        guard currentElementMatches(target), let element = target.element,
+              let before = target.snapshot.value, let originalRange = target.snapshot.selection,
               let afterRange = TextInsertionAdvance.caret(afterReplacing: originalRange, with: insertedText),
-              let expectedValue = TextInsertionAdvance.replacement(in: before, selection: originalRange, text: insertedText),
-              let currentSelection = attribute(kAXSelectedTextRangeAttribute, of: target.element),
-              range(currentSelection) == afterRange,
-              currentMatches(target, selection: currentSelection),
-              attribute(kAXValueAttribute, of: target.element) as? String == expectedValue else { return nil }
-        return InsertionReceipt(previous: target, selection: currentSelection, value: expectedValue)
+              let expectedValue = TextInsertionAdvance.replacement(in: before, selection: originalRange, text: insertedText)
+        else { return nil }
+        let current = snapshot(element)
+        guard current.selection == afterRange, current.value == expectedValue else { return nil }
+        return InsertionReceipt(previous: target, selection: afterRange, value: expectedValue)
     }
 
-    private func range(_ value: CFTypeRef) -> NSRange? {
-        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
-        let axValue = unsafeDowncast(value, to: AXValue.self)
-        var range = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
-        return NSRange(location: range.location, length: range.length)
+    private func pasteWasObserved(_ target: Target, insertedText: String) -> Bool {
+        guard currentElementMatches(target), let element = target.element,
+              let after = attribute(kAXValueAttribute, of: element) as? String else { return false }
+        return TextInsertionPolicy.observesPaste(captured: target.snapshot, currentValue: after, text: insertedText)
     }
 
-    private func sameWindow(_ first: AXUIElement?, _ second: AXUIElement?) -> Bool {
-        switch (first, second) {
-        case (.none, .none): return true
-        case let (.some(first), .some(second)): return CFEqual(first, second)
-        default: return false
+    private func currentElementMatches(_ target: Target) -> Bool {
+        guard !userInteracted, AXIsProcessTrusted(), !IsSecureEventInputEnabled(),
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+              let element = target.element, let current = editableElement(focusedElement(in: target.processIdentifier)),
+              CFEqual(element, current), !isProtected(current) else { return false }
+        return sameWindow(target.window, window(in: target.processIdentifier, element: current)) != false
+    }
+
+    private func targetStillMatches(_ target: Target) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        let focused = focusedElement(in: target.processIdentifier)
+        let current = editableElement(focused)
+        let sameElement: Bool?
+        if let original = target.element ?? target.focusedElement, let observed = current ?? focused {
+            sameElement = CFEqual(original, observed)
         }
+        else { sameElement = nil }
+        return TextInsertionPolicy.allowsPaste(
+            sameApplication: NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
+            sameElement: sameElement,
+            sameWindow: sameWindow(target.window, window(in: target.processIdentifier, element: focused)),
+            userInteracted: target.requiresSelectedText ? false : userInteracted,
+            secureInput: IsSecureEventInputEnabled() || isProtected(focused),
+            captured: target.snapshot, current: snapshot(current), requiresSelectedText: target.requiresSelectedText)
+    }
+
+    private func startTracking(_ processIdentifier: pid_t) {
+        inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            // Fn starts/stops another capture; our own Cmd+V is not a user edit.
+            if event.type == .keyDown {
+                if event.keyCode == 63 || event.keyCode == 53 { return }
+                if event.keyCode == 9,
+                   event.cgEvent?.getIntegerValueField(.eventSourceUserData) == VeloceEventSourceUserData.textInserterPaste { return }
+            }
+            self?.userInteracted = true
+        }
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            MainActor.assumeIsolated {
+                if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                   app.processIdentifier != processIdentifier { self?.userInteracted = true }
+            }
+        }
+    }
+
+    private func stopTracking() {
+        if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+        inputMonitor = nil
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil
+    }
+
+    func clearTarget() {
+        target = nil; captureFailure = nil; userInteracted = false
+        stopTracking()
     }
 
     func copy(_ text: String) {
@@ -176,96 +255,99 @@ final class TextInserter {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    func clearTarget() {
-        target = nil
+    private func snapshot(_ element: AXUIElement?) -> TextInputSnapshot {
+        guard let element else { return TextInputSnapshot() }
+        return TextInputSnapshot(selection: attribute(kAXSelectedTextRangeAttribute, of: element).flatMap(range),
+                                 selectedText: attribute(kAXSelectedTextAttribute, of: element) as? String,
+                                 value: attribute(kAXValueAttribute, of: element) as? String)
     }
 
-    private func targetStillMatches(_ target: Target) -> Bool {
-        guard currentMatches(target, selection: target.selection) else { return false }
-        if let original = target.selectedText {
-            guard let currentText = attribute(kAXSelectedTextAttribute, of: target.element) as? String,
-                  currentText == original else { return false }
-        }
-        if let value = target.value {
-            guard attribute(kAXValueAttribute, of: target.element) as? String == value else { return false }
-        }
-        return true
+    private func range(_ value: CFTypeRef) -> NSRange? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(unsafeDowncast(value, to: AXValue.self), .cfRange, &range),
+              range.location >= 0, range.length >= 0 else { return nil }
+        return NSRange(location: range.location, length: range.length)
     }
 
-    private func currentMatches(_ target: Target, selection expectedSelection: CFTypeRef) -> Bool {
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
-              let current = focusedTextElement(in: target.processIdentifier),
-              CFEqual(current, target.element),
-              let selection = attribute(kAXSelectedTextRangeAttribute, of: current),
-              CFEqual(selection, expectedSelection)
-        else { return false }
-        if let window = target.window {
-            guard let currentWindow = elementAttribute(kAXWindowAttribute, of: current),
-                  CFEqual(window, currentWindow) else { return false }
-        }
-        return true
+    private func sameWindow(_ first: AXUIElement?, _ second: AXUIElement?) -> Bool? {
+        guard let first, let second else { return nil }
+        return CFEqual(first, second)
     }
 
-    private func focusedTextElement(in processIdentifier: pid_t) -> AXUIElement? {
-        guard AXIsProcessTrusted(), !IsSecureEventInputEnabled() else { return nil }
+    private func focusedElement(in processIdentifier: pid_t) -> AXUIElement? {
         let application = AXUIElementCreateApplication(processIdentifier)
-        guard let element = elementAttribute(kAXFocusedUIElementAttribute, of: application),
-              let role = attribute(kAXRoleAttribute, of: element) as? String,
-              [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role),
-              (attribute(kAXEnabledAttribute, of: element) as? Bool) != false
-        else { return nil }
-
-        // Password inputs may report protection on either the input or its container.
-        var ancestor: AXUIElement? = element
-        for _ in 0..<12 {
-            guard let current = ancestor else { break }
-            let subrole = attribute(kAXSubroleAttribute, of: current) as? String
-            let protected = attribute("AXProtectedContent", of: current) as? Bool
-            if subrole == kAXSecureTextFieldSubrole || protected == true { return nil }
-            ancestor = elementAttribute(kAXParentAttribute, of: current)
+        guard var element = elementAttribute(kAXFocusedUIElementAttribute, of: application) else { return nil }
+        for _ in 0..<4 {
+            guard let child = elementAttribute(kAXFocusedUIElementAttribute, of: element), !CFEqual(child, element) else { break }
+            element = child
         }
         return element
     }
 
+    private func editableElement(_ element: AXUIElement?) -> AXUIElement? {
+        guard let element, (attribute(kAXEnabledAttribute, of: element) as? Bool) != false else { return nil }
+        let role = attribute(kAXRoleAttribute, of: element) as? String ?? ""
+        if [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField"].contains(role) { return element }
+        var settable = DarwinBoolean(false)
+        if AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success,
+           settable.boolValue { return element }
+        return nil
+    }
+
+    private func isProtected(_ element: AXUIElement?) -> Bool {
+        var ancestor = element
+        for _ in 0..<12 {
+            guard let current = ancestor else { break }
+            if attribute(kAXSubroleAttribute, of: current) as? String == kAXSecureTextFieldSubrole
+                || attribute("AXProtectedContent", of: current) as? Bool == true { return true }
+            ancestor = elementAttribute(kAXParentAttribute, of: current)
+        }
+        return false
+    }
+
+    private func window(in processIdentifier: pid_t, element: AXUIElement?) -> AXUIElement? {
+        if let element, let window = elementAttribute(kAXWindowAttribute, of: element) { return window }
+        return elementAttribute(kAXFocusedWindowAttribute, of: AXUIElementCreateApplication(processIdentifier))
+    }
+
     private func attribute(_ name: String, of element: AXUIElement) -> CFTypeRef? {
-        // A hung target app should fall back to Copy, not freeze the dictation UI.
         AXUIElementSetMessagingTimeout(element, 0.1)
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else {
-            return nil
-        }
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return value
     }
 
     private func elementAttribute(_ name: String, of element: AXUIElement) -> AXUIElement? {
-        guard let value = attribute(name, of: element),
-              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        guard let value = attribute(name, of: element), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value, to: AXUIElement.self)
     }
+}
 
-    private func snapshotClipboard() -> ClipboardSnapshot? {
-        let pasteboard = NSPasteboard.general
-        let changeCount = pasteboard.changeCount
-        var items: [ClipboardItem] = []
-        for item in pasteboard.pasteboardItems ?? [] {
-            var representations: [(NSPasteboard.PasteboardType, Data)] = []
-            for type in item.types {
-                // Avoid destroying an existing clipboard format that cannot be materialized.
-                guard let data = item.data(forType: type) else { return nil }
-                representations.append((type, data))
+/// Materialize readable formats; private/promise-only formats can return nil.
+/// Such a format must not disable dictation while ordinary clipboard data exists.
+@MainActor
+struct ClipboardBackup {
+    let items: [[(NSPasteboard.PasteboardType, Data)]]
+    let changeCount: Int
+
+    static func capture(from pasteboard: NSPasteboard = .general) -> ClipboardBackup? {
+        let version = pasteboard.changeCount
+        let items = (pasteboard.pasteboardItems ?? []).compactMap { item -> [(NSPasteboard.PasteboardType, Data)]? in
+            let readable = item.types.compactMap { type -> (NSPasteboard.PasteboardType, Data)? in
+                item.data(forType: type).map { (type, $0) }
             }
-            items.append(ClipboardItem(representations: representations))
+            return readable.isEmpty ? nil : readable
         }
-        guard pasteboard.changeCount == changeCount else { return nil }
-        return ClipboardSnapshot(items: items, changeCount: changeCount)
+        guard pasteboard.changeCount == version else { return nil }
+        return ClipboardBackup(items: items, changeCount: version)
     }
 
-    private func restore(_ items: [ClipboardItem], ifUnchangedSince changeCount: Int) {
-        let pasteboard = NSPasteboard.general
-        guard pasteboard.changeCount == changeCount else { return }
-        let restored = items.map { saved -> NSPasteboardItem in
+    func restore(to pasteboard: NSPasteboard = .general, ifUnchangedSince version: Int) {
+        guard pasteboard.changeCount == version else { return }
+        let restored = items.map { representations -> NSPasteboardItem in
             let item = NSPasteboardItem()
-            for (type, data) in saved.representations { item.setData(data, forType: type) }
+            for (type, data) in representations { item.setData(data, forType: type) }
             return item
         }
         pasteboard.clearContents()

@@ -9,8 +9,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Swift tests
         run: swift test
+      - name: Install uv for app packaging
+        run: brew list uv >/dev/null 2>&1 || brew install uv
       - name: Build development app
         run: bash scripts/build-app.sh
+      - name: Clipboard backup and restoration (isolated pasteboard)
+        run: build/Veloce.app/Contents/MacOS/Veloce --verify-text-insertion
       - name: Native meeting audio pipeline (synthetic, no capture)
         run: build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-audio "$RUNNER_TEMP/veloce-meeting-audio"
       - name: Native audio file import (synthetic, no capture)

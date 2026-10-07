@@ -3,20 +3,65 @@ import VeloceCore
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var updates: UpdateController
+    @EnvironmentObject private var login: LaunchAtLoginController
     @State private var confirmClearHistory = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 25) {
             VStack(alignment: .leading, spacing: 14) {
-                SectionEyebrow(text: "Juste l’essentiel")
-                Text("Faites comme chez vous.")
+                SectionEyebrow(text: "Configuration")
+                Text("Réglages")
                     .font(.system(size: 36, weight: .medium, design: .rounded))
                     .tracking(-1.3)
-                Text("Quelques réglages pour une dictée qui vous ressemble.")
+                Text("Langue, raccourcis, affichage et historique.")
                     .font(.system(size: 13))
                     .foregroundStyle(VeloceTheme.secondary)
             }
             .padding(.top, 8)
+
+            VStack(alignment: .leading, spacing: 11) {
+                SectionEyebrow(text: "Application")
+                SurfaceCard {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack {
+                            Text("Véloce \(updates.version)").font(.system(size: 13, weight: .medium))
+                            Spacer()
+                            Button("Rechercher une mise à jour…", action: updates.checkForUpdates)
+                                .buttonStyle(VeloceButtonStyle(prominent: false))
+                                .disabled(!updates.canCheckForUpdates || model.isBusy)
+                        }
+                        if let status = updates.statusMessage {
+                            Text(status).font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                        }
+                        if let date = updates.lastCheck {
+                            Text("Dernière recherche : \(date.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.system(size: 10)).foregroundStyle(VeloceTheme.secondary)
+                        }
+                        Toggle(isOn: Binding(get: { updates.automaticUpdatesEnabled }, set: updates.setAutomaticUpdates)) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("Mises à jour automatiques").font(.system(size: 13, weight: .medium))
+                                Text("Télécharge les nouvelles versions et les installe à la fermeture. Les modèles et l’historique sont conservés.")
+                                    .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch).tint(VeloceTheme.green)
+                        Rectangle().fill(VeloceTheme.line.opacity(0.7)).frame(height: 1)
+                        Toggle(isOn: Binding(get: { login.status == .enabled || login.status == .requiresApproval }, set: login.setEnabled)) {
+                            Text("Ouvrir Véloce au démarrage du Mac").font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch).tint(VeloceTheme.green)
+                        if login.status == .requiresApproval {
+                            Text("macOS attend votre autorisation dans les éléments d’ouverture.")
+                                .font(.system(size: 11)).foregroundStyle(VeloceTheme.secondary)
+                            Button("Ouvrir les réglages macOS", action: login.openSettings).buttonStyle(.plain)
+                        }
+                        if let error = login.errorMessage {
+                            Text(error).font(.system(size: 11)).foregroundStyle(VeloceTheme.error)
+                        }
+                    }
+                }
+            }
 
             VStack(alignment: .leading, spacing: 11) {
                 SectionEyebrow(text: "Les permissions")
@@ -223,6 +268,8 @@ struct SettingsView: View {
             .foregroundStyle(VeloceTheme.secondary)
             .padding(.top, 3)
         }
+        .onAppear { login.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in login.refresh() }
         .confirmationDialog("Effacer toutes les dictées enregistrées ?", isPresented: $confirmClearHistory, titleVisibility: .visible) {
             Button("Effacer l’historique", role: .destructive, action: model.clearHistory)
             Button("Annuler", role: .cancel) { }

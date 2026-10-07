@@ -1,7 +1,5 @@
 # Véloce
 
-**L’esprit libre. Les mots suivent.**
-
 Une petite app de dictée pour macOS et Apple Silicon. Maintenez **Fn**, parlez, relâchez : votre texte revient dans le champ où vous écriviez. Interface SwiftUI, inférence MLX sur le Mac, aucun compte ni service de transcription.
 
 `Veloce` pour le dépôt et l’application ; **Véloce** dans l’interface.
@@ -10,7 +8,7 @@ Une petite app de dictée pour macOS et Apple Silicon. Maintenez **Fn**, parlez,
 
 Véloce est une app de dictée et de réunions pour macOS et Apple Silicon. La reconnaissance vocale tourne localement avec MLX ; aucun compte ni service cloud de transcription. Le téléchargement initial des modèles et dépendances nécessite Internet.
 
-La version de développement 0.2 intègre :
+La version de développement 0.2.2 intègre :
 
 - Dictée Fn avec Qwen3-ASR 0.6B par défaut ; le profil 1.7B et Parakeet TDT v3 sont aussi disponibles. Un seul modèle ASR tourne à la fois. Le double Fn active le mode mains libres.
 - Capture de la dictée suivante pendant le traitement, avec file FIFO bornée à quatre dictées, un seul ASR, puis collage dans l’ordre. Échap annule la capture en cours et laisse le traitement actif continuer. Fn ne lance pas de nouvelle dictée pendant une réunion.
@@ -20,11 +18,19 @@ La version de développement 0.2 intègre :
 - Service Finder accessible par clic droit → Services → Transcrire dans Véloce. Il crée à côté du média un `.txt` ou `.md` portant la même base de nom, sans écraser un fichier existant, et ajoute la transcription à l’historique.
 - Transcription en direct facultative, avec mise à jour environ toutes les 30 secondes sur un worker Qwen 0.6B ; calendrier et rappels facultatifs, ainsi que questions de recherche lexicale locale avec Apple Intelligence et passages de référence.
 
-Le nettoyage, la réécriture, la traduction et les questions avec Apple Intelligence exigent macOS 26 et un modèle disponible prenant en charge le français. Les 42 tests Swift, les 24 tests Python et les quatre contrôles natifs sur données synthétiques ont réussi. Cela ne valide pas un véritable appel, le service Finder sur une machine utilisateur, les résultats Apple Intelligence ni les performances sur un corpus français représentatif.
+Le nettoyage, la réécriture, la traduction et les questions avec Apple Intelligence exigent macOS 26 et un modèle disponible prenant en charge le français. Les tests Swift, Python et les contrôles natifs sur données synthétiques couvrent les files de traitement, le collage et les imports. Cela ne valide pas un véritable appel, le service Finder sur une machine utilisateur, les résultats Apple Intelligence ni les performances sur un corpus français représentatif.
 
-La signature, la notarisation, le packaging autonome et la validation des autorisations restent à faire avant distribution publique. La durée maximale d’une dictée est de deux minutes.
+Les versions de développement utilisent une signature locale et des mises à jour Sparkle signées. La notarisation Apple et la validation sur d’autres Mac restent à faire avant une distribution grand public. La durée maximale d’une dictée est de deux minutes.
 
-## Lancer
+## Installer et mettre à jour
+
+Installez `Veloce.app` dans `/Applications`. Dans **Réglages → Application**, le bouton **Rechercher une mise à jour…** propose les versions publiées sur [GitHub Releases](https://github.com/nitroshady4000/veloce/releases). Les mises à jour automatiques sont activées par défaut : elles téléchargent les versions signées puis les installent à la fermeture. Un redémarrage demandé pour mettre à jour attend la fin d’un enregistrement ou traitement en cours.
+
+Le réglage **Ouvrir Véloce au démarrage du Mac** utilise les éléments d’ouverture natifs de macOS. macOS peut demander une confirmation dans ses réglages.
+
+Les modèles et l’historique restent en dehors de l’application et sont conservés pendant les mises à jour. Pour publier la version suivante, voir [RELEASING.md](docs/RELEASING.md).
+
+## Compiler
 
 Requis : Mac Apple Silicon, macOS 14+, outils de développement Swift 6.2+, [uv](https://docs.astral.sh/uv/getting-started/installation/). Xcode complet n’est pas nécessaire au moteur Python.
 
@@ -38,7 +44,7 @@ bash scripts/build-app.sh --open
 
 Dans **Modèles**, choisissez un profil puis préparez-le. Véloce crée un environnement Python 3.12 isolé, installe les dépendances verrouillées et télécharge les poids à une révision précise. Le premier chargement prend plusieurs minutes selon votre connexion. Comptez environ 1 Go pour Équilibre, 2,5 Go pour Précision. Ensuite, la transcription reste locale.
 
-Les builds de développement utilisent `Engine/` dans le checkout : conservez le dépôt à cet emplacement. Le packaging autonome d’un runtime signé reste à faire avant distribution publique.
+L’app compilée embarque le code du moteur et uv. Python est installé dans `~/Library/Application Support/Veloce/Engine`, et les modèles dans `~/Library/Caches/Veloce/models`. Le dépôt peut ensuite être déplacé sans casser l’app installée.
 
 Dans Véloce, les boutons **Microphone** et **Fn et insertion** ouvrent un guide. Il déclenche la demande native ou ouvre le panneau approprié de Réglages Système, puis vérifie automatiquement les accès. Fn est déclaré prêt seulement quand son écouteur a réellement démarré. L’accessibilité sert à écouter Fn et à insérer le texte.
 
@@ -50,9 +56,11 @@ La signature ad hoc de développement change à chaque recompilation : macOS peu
 VELOCE_SIGN_IDENTITY="Apple Development: Votre nom (TEAMID)" bash scripts/build-app.sh
 ```
 
-Véloce ne modifie pas les autorisations système à votre place. Une identité de signature stable est nécessaire pour rendre les mises à jour fiables ; la signature et la notarisation des releases restent à mettre en place.
+Véloce ne modifie pas les autorisations système à votre place. Les releases successives conservent la même identité de signature et la même clé Sparkle. La notarisation Apple reste distincte de la signature locale de développement.
 
-Placez le curseur dans un champ texte, maintenez Fn, parlez puis relâchez. **Échap** annule pendant l’enregistrement. Les raccourcis Fn combinés avec d’autres touches annulent la dictée. Les champs protégés et les applications qui n’exposent pas un champ texte accessible utilisent le bouton Copier.
+Placez le curseur dans un champ texte, maintenez Fn, parlez puis relâchez. **Échap** annule pendant l’enregistrement. Les raccourcis Fn combinés avec d’autres touches annulent la dictée. Le collage fonctionne aussi lorsque l’app expose un champ texte sans position de curseur accessible. Les champs protégés utilisent le bouton Copier. Si la destination change pendant le traitement, le texte reste disponible dans Véloce.
+
+Au lancement, Véloce recharge le dernier modèle préparé depuis le cache local, sans téléchargement. Le bouton Préparer sert à charger un autre modèle ou à télécharger les fichiers manquants.
 
 Vous pouvez redicter pendant le traitement du texte précédent : les dictées sont traitées et collées dans leur ordre d’enregistrement, sans charger un second modèle. Chaque dictée garde sa destination. Le curseur d’une capture suivante avance après notre propre collage seulement si la fenêtre, le champ, le texte et la position sont vérifiés ; si vous changez de destination ou modifiez le texte, le résultat reste disponible avec Copier.
 
@@ -107,6 +115,7 @@ build/design-preview/Veloce.app/Contents/MacOS/Veloce --render-design build/desi
 swift test --disable-sandbox
 python3 -m unittest discover -s Engine -p 'test_*.py' -v
 # Convertisseur natif + WAV, sur données synthétiques uniquement, dossier neuf :
+build/Veloce.app/Contents/MacOS/Veloce --verify-text-insertion
 build/Veloce.app/Contents/MacOS/Veloce --verify-meeting-audio /tmp/veloce-audio-check
 build/Veloce.app/Contents/MacOS/Veloce --verify-audio-import /tmp/veloce-import-check
 build/Veloce.app/Contents/MacOS/Veloce --verify-finder-service /tmp/veloce-finder-check
@@ -121,7 +130,7 @@ Une veille hebdomadaire des versions est fournie en CI ; elle produit un rapport
 
 Le téléchargement initial contacte les registres Python et Hugging Face. Les dictées ne leur sont pas envoyées. Aucune télémétrie applicative. Historique des dictées optionnel dans `~/Library/Application Support/Veloce/history.json` ; les transcriptions de réunions, y compris celles lancées depuis Finder, sont conservées dans leur historique local ; les builds de développement gardent les modèles dans `Engine/.models`. Le moteur autonome utilise `~/Library/Caches/Veloce/models` (sauf `VELOCE_MODEL_CACHE`).
 
-Le collage simule Cmd+V : macOS ne confirme pas que l’application destinataire a accepté le texte. Le résultat reste donc accessible dans Véloce. L’audio temporaire peut subsister après un arrêt brutal du processus ou de macOS. La version de développement utilise une signature ad hoc. Le packaging public autonome et la notarisation restent à faire ; la validation d’un vrai appel, du service Finder sur une machine utilisateur et un benchmark français réel restent également ouverts.
+Le collage simule Cmd+V. Lorsque l’app expose son texte, Véloce vérifie l’insertion avant de restaurer les formats lisibles du presse-papiers. Sans confirmation, la transcription reste dans le presse-papiers pour permettre un collage retardé ou manuel ; une nouvelle copie faite par l’utilisateur est toujours préservée. Le résultat reste également accessible dans Véloce. L’audio temporaire peut subsister après un arrêt brutal du processus ou de macOS. Les builds sans identité de signature utilisent une signature ad hoc. La notarisation Apple reste à faire ; la validation d’un vrai appel, du service Finder sur une machine utilisateur et un benchmark français réel restent également ouverts.
 
 ## Licence
 

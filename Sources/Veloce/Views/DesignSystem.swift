@@ -40,17 +40,28 @@ struct VeloceMark: View {
     var color: Color = VeloceTheme.accent
 
     var body: some View {
-        ZStack {
-            Path { path in
-                path.move(to: CGPoint(x: size * 0.16, y: size * 0.31))
-                path.addLine(to: CGPoint(x: size * 0.40, y: size * 0.76))
-                path.addQuadCurve(to: CGPoint(x: size * 0.48, y: size * 0.76), control: CGPoint(x: size * 0.44, y: size * 0.86))
-                path.addLine(to: CGPoint(x: size * 0.87, y: size * 0.16))
-            }
-            .stroke(color, style: StrokeStyle(lineWidth: size * 0.105, lineCap: .round, lineJoin: .round))
+        VeloceMarkShape().fill(color)
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Five rounded waveform bars whose ends trace a V.
+struct VeloceMarkShape: Shape {
+    /// (x centre, top, bottom) in unit space; scripts/make-icon.swift mirrors it.
+    static let bars: [(CGFloat, CGFloat, CGFloat)] = [
+        (0.180, 0.260, 0.470), (0.340, 0.385, 0.690), (0.500, 0.560, 0.840),
+        (0.660, 0.300, 0.700), (0.820, 0.150, 0.450)
+    ]
+    func path(in rect: CGRect) -> Path {
+        let s = min(rect.width, rect.height), w = s * 0.13
+        var path = Path()
+        for (x, top, bottom) in Self.bars {
+            path.addRoundedRect(in: CGRect(x: rect.minX + x * s - w / 2, y: rect.minY + top * s,
+                                           width: w, height: (bottom - top) * s),
+                                cornerSize: CGSize(width: w / 2, height: w / 2))
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+        return path
     }
 }
 

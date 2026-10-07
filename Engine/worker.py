@@ -131,7 +131,7 @@ class ParakeetBackend:
         return {"text": result.text.strip(), "language": None}
 
 
-def make_backend(model_id: str):
+def make_backend(model_id: str, *, local_files_only: bool = False):
     spec = MODELS[model_id]
     module = "mlx_qwen3_asr" if spec["backend"] == "qwen" else "parakeet_mlx"
     if importlib.util.find_spec(module) is None:
@@ -139,20 +139,40 @@ def make_backend(model_id: str):
         raise EngineError("dependency_missing", f"Run {setup} to install this engine.")
     from huggingface_hub import snapshot_download
     cache = os.environ.get("VELOCE_MODEL_CACHE", str(Path.home() / "Library/Caches/Veloce/models"))
-    model_path = snapshot_download(
-        repo_id=spec["repository"], revision=spec["revision"], cache_dir=cache,
-        allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.vocab"],
-        local_files_only=os.environ.get("VELOCE_OFFLINE") == "1",
-    )
+    try:
+        model_path = snapshot_download(
+            repo_id=spec["repository"], revision=spec["revision"], cache_dir=cache,
+            allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.vocab"],
+            local_files_only=local_files_only or os.environ.get("VELOCE_OFFLINE") == "1",
+        )
+    except Exception as error:
+        if local_files_only:
+            raise EngineError("model_not_cached", "Ce modèle n’est pas encore préparé sur ce Mac.") from error
+        raise
     return QwenBackend(model_path) if spec["backend"] == "qwen" else ParakeetBackend(model_path)
 
 
 class Engine:
-    def __init__(self, emit=lambda _event: None, backend_factory=make_backend):
+    def __init__(self, emit=lambda _event: None, backend_factory=make_backend, cached_backend_factory=None):
         self.emit = emit
         self.backend_factory = backend_factory
+        self.cached_backend_factory = cached_backend_factory or (
+            lambda model_id: make_backend(model_id, local_files_only=True)
+        )
         self.backend = None
         self.model_id = None
+
+    def load(self, model_id: str, *, cached_only: bool = False) -> dict:
+        if model_id not in MODELS:
+            raise EngineError("unknown_model", "Choose a model from the models response.")
+        if self.model_id != model_id:
+            self.unload()
+            self.emit({"event": "status", "state": "loading_cached" if cached_only else "loading", "model": model_id})
+            factory = self.cached_backend_factory if cached_only else self.backend_factory
+            self.backend = factory(model_id)
+            self.model_id = model_id
+        self.emit({"event": "status", "state": "ready", "model": model_id})
+        return {"state": "ready", "model": model_id}
 
     def unload(self):
         self.backend = None
@@ -189,16 +209,9 @@ class Engine:
             self.unload()
             return {"state": "idle", "model": None}
         if method == "load":
-            model_id = params.get("model")
-            if model_id not in MODELS:
-                raise EngineError("unknown_model", "Choose a model from the models response.")
-            if self.model_id != model_id:
-                self.unload()
-                self.emit({"event": "status", "state": "loading", "model": model_id})
-                self.backend = self.backend_factory(model_id)
-                self.model_id = model_id
-            self.emit({"event": "status", "state": "ready", "model": model_id})
-            return {"state": "ready", "model": model_id}
+            return self.load(params.get("model"))
+        if method == "load_cached":
+            return self.load(params.get("model"), cached_only=True)
         if method == "transcribe":
             model_id = params.get("model", self.model_id)
             if self.backend is None or model_id != self.model_id:
@@ -222,7 +235,7 @@ class Engine:
                 self.emit({"event": "status", "state": "ready", "model": model_id})
             return {**result, "model": model_id, "audio_duration_seconds": duration,
                     "inference_seconds": round(time.perf_counter() - started, 4)}
-        raise EngineError("unknown_method", "Supported methods: status, models, load, transcribe, transcribe_meeting, prepare_diarization, export_meeting_audio, unload.")
+        raise EngineError("unknown_method", "Supported methods: status, models, load, load_cached, transcribe, transcribe_meeting, prepare_diarization, export_meeting_audio, unload.")
 
 
 def serve(input_stream=sys.stdin, output_stream=sys.stdout, engine_factory=Engine):

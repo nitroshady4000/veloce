@@ -10,8 +10,8 @@ struct DictationView: View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 18) {
-                    SectionEyebrow(text: "Moins de clavier. Plus d’élan.")
-                    Text("L’esprit libre.\nLes mots suivent.")
+                    SectionEyebrow(text: "Dictée vocale")
+                    Text("Dictez votre texte.")
                         .font(.system(size: 41, weight: .medium, design: .rounded))
                         .tracking(-1.6)
                         .lineSpacing(0)
@@ -90,9 +90,9 @@ struct DictationView: View {
                             .foregroundStyle(VeloceTheme.secondary.opacity(0.65))
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Une pensée ? Dites-la.")
+                            Text("Aucune dictée")
                                 .font(.system(size: 18, weight: .medium, design: .rounded))
-                            Text(model.keepHistory ? "Votre dernière dictée apparaîtra ici, prête à être retrouvée ou copiée." : "Vos dictées seront insérées directement, sans être conservées dans l’historique.")
+                            Text(model.keepHistory ? "Vos dictées récentes apparaîtront ici." : "L’historique est désactivé. Les dictées ne sont pas conservées.")
                                 .font(.system(size: 12))
                                 .lineSpacing(4)
                                 .foregroundStyle(VeloceTheme.secondary)
