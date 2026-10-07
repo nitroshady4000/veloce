@@ -58,11 +58,11 @@ select another account. CI can instead supply a protected private key file with
 
 ```sh
 # Example versions only: choose an unused version and increasing build number.
-VELOCE_SIGN_IDENTITY='Famulus Dev' scripts/package-release.sh 0.3.0 4 release-notes.md
+VELOCE_SIGN_IDENTITY='Famulus Dev' scripts/package-release.sh 0.3.0 5 release-notes.md
 ```
 
 The optional third argument is a Markdown release notes file. Outputs are under
-`build/releases/v0.3.0-build.4/`: a verified app and an `assets` directory with
+`build/releases/v0.3.0-build.5/`: a verified app and an `assets` directory with
 the ZIP, signed appcast, optional signed notes, and checksums. The packaging
 script never publishes. It verifies the ZIP signature against the public key in
 the app and verifies the signed feed using Sparkle's official tool.
@@ -76,9 +76,9 @@ Review and test the prepared app, commit the corresponding source, then create
 and push its tag. Publish only when the release is ready:
 
 ```sh
-git tag v0.3.0-build.4
-git push origin v0.3.0-build.4
-scripts/publish-release.sh v0.3.0-build.4
+git tag v0.3.0-build.5
+git push origin v0.3.0-build.5
+scripts/publish-release.sh v0.3.0-build.5
 ```
 
 Publishing uses `gh`, requires a pre-existing remote tag, verifies checksums, and
@@ -95,3 +95,13 @@ quitting and relaunching. Retain the same Ed25519 key for future updates.
 Implementation references: [Sparkle setup](https://sparkle-project.org/documentation/),
 [manual nested code signing](https://sparkle-project.org/documentation/sandboxing/#code-signing),
 and [publishing updates](https://sparkle-project.org/documentation/publishing/).
+
+## Verified installation
+
+On 2026-10-07, a local build labelled 0.2.1/build 3 was installed in
+`/Applications/Veloce.app` and updated through Sparkle to the published
+0.2.2/build 4 ZIP. Automatic download completed, Install and Relaunch replaced
+the bundle, and deep signature verification passed. The macOS login item
+remained enabled and allowed at the Applications path after replacement.
+The bundled automatic-update defaults remained enabled. The model cache
+was migrated without redownloading model weights. Both GitHub CI runs passed.

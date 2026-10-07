@@ -54,6 +54,7 @@ if [[ -n "${VELOCE_SPARKLE_KEY_FILE:-}" ]]; then
 fi
 "$SPARKLE_BIN/generate_appcast" "${KEY_OPTIONS[@]}" \
     --download-url-prefix "https://github.com/$REPOSITORY/releases/download/$TAG/" \
+    --release-notes-url-prefix "https://github.com/$REPOSITORY/releases/download/$TAG/" \
     --maximum-deltas 0 "$OUTPUT/assets"
 [[ -s "$OUTPUT/assets/appcast.xml" ]] || { echo "Sparkle did not generate appcast.xml." >&2; exit 1; }
 # Verify the archive with the exact public key embedded in this app. This catches
